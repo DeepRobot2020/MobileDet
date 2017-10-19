@@ -1,0 +1,10 @@
+Good_Insulator
+Bad_Insulator
+Good_Damper
+Bad_Damper
+Good_Cable_Conenction
+Bad_Cable_Connection
+Good_Sign
+Bad_Sign
+Has_cotter_pin
+Missing_cotter_pin
