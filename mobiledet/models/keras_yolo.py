@@ -14,22 +14,19 @@ from .keras_darknet19 import (DarknetConv2D, DarknetConv2D_BN_Leaky,
 
 sys.path.append('..')
 
-voc_anchors = np.array(
-    [[1.08, 1.19], [3.42, 4.41], [6.63, 11.38], [9.42, 5.11], [16.62, 10.52]])
-
-voc_classes = [
-    "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat",
-    "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person",
-    "pottedplant", "sheep", "sofa", "train", "tvmonitor"
-]
-
-
 def space_to_depth_x2(x):
     """Thin wrapper for Tensorflow space_to_depth with block_size=2."""
     # Import currently required to make Lambda work.
     # See: https://github.com/fchollet/keras/issues/5088#issuecomment-273851273
     import tensorflow as tf
     return tf.space_to_depth(x, block_size=2)
+
+
+def space_to_depth_x4(x):
+    """Thin wrapper for Tensorflow space_to_depth with block_size=4."""
+    # Import currently required to make Lambda work.
+    import tensorflow as tf
+    return tf.space_to_depth(x, block_size=4)
 
 
 def space_to_depth_x2_output_shape(input_shape):
@@ -41,8 +38,16 @@ def space_to_depth_x2_output_shape(input_shape):
             input_shape[3]) if input_shape[1] else (input_shape[0], None, None,
                                                     4 * input_shape[3])
 
+def space_to_depth_x4_output_shape(input_shape):
+    """Determine space_to_depth output shape for block_size=2.
 
-def yolo_body(inputs, num_anchors, num_classes):
+    Note: For Lambda with TensorFlow backend, output shape may not be needed.
+    """
+    return (input_shape[0], input_shape[1] // 4, input_shape[2] // 4, 16 *
+            input_shape[3]) if input_shape[1] else (input_shape[0], None, None,
+                                                    16 * input_shape[3])
+
+def yolo_body_darknet19(inputs, num_anchors, num_classes, extra_feat=False):
     """Create YOLO_V2 model CNN body in Keras."""
     darknet = Model(inputs, darknet_body()(inputs))
     conv20 = compose(
@@ -55,12 +60,43 @@ def yolo_body(inputs, num_anchors, num_classes):
     conv21_reshaped = Lambda(
         space_to_depth_x2,
         output_shape=space_to_depth_x2_output_shape,
-        name='space_to_depth')(conv21)
+        name='space_to_depth_x2')(conv21)
 
     x = concatenate([conv21_reshaped, conv20])
     x = DarknetConv2D_BN_Leaky(1024, (3, 3))(x)
     x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
     return Model(inputs, x)
+
+def yolo_body_mobilenet(inputs, num_classes, num_anchors):
+    """
+    Mobile Detector Implementation
+    :param feature_extractor:
+    :param num_classes:
+    :param num_anchors:
+    :return:
+    """
+    inputs = feature_extractor.model.output
+    i = feature_extractor.model.get_layer(fine_grained_layers).output
+
+    x = _depthwise_conv_block(inputs, 1024, 1.0, block_id=14)
+    x = _depthwise_conv_block(x, 1024, 1.0, block_id=15)
+    x2 = x
+
+    # Reroute
+    x = Conv2D(64, (1, 1), padding='same', use_bias=False, strides=(1, 1))(i)
+    x = BatchNormalization()(x)
+    x = Activation(relu6)(x)
+
+    x = Lambda(lambda x: tf.space_to_depth(x, block_size=2),
+               lambda shape: [shape[0], shape[1] / 2, shape[2] / 2, 2 * 2 * shape[-1]] if shape[1] else
+               [shape[0], None, None, 2 * 2 * shape[-1]],
+               name='space_to_depth_x2')(x)
+    x = concatenate([x, x2])
+
+    x = _depthwise_conv_block(x, 1024, 1.0, block_id=16)
+    x = Conv2D(num_anchors * (num_classes + 5), (1, 1))(x)
+
+    return x
 
 
 def yolo_head(feats, anchors, num_classes):

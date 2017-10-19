@@ -31,7 +31,6 @@ def DarknetConv2D_BN_Leaky(*args, **kwargs):
         BatchNormalization(),
         LeakyReLU(alpha=0.1))
 
-
 def bottleneck_block(outer_filters, bottleneck_filters):
     """Bottleneck block of 3x3, 1x1, 3x3 convolutions."""
     return compose(
