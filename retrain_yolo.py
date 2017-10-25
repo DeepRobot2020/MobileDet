@@ -16,12 +16,13 @@ from keras.layers import Input, Lambda, Conv2D
 from keras.models import load_model, Model
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
 
-from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_darknet19,
+from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_darknet19, yolo_body_darknet_feature,
                                      yolo_body_mobilenet, yolo_eval, yolo_head, yolo_loss)
 from mobiledet.utils.draw_boxes import draw_boxes
 
 from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, augment_image
 from mobiledet.models.keras_yolo import yolo_get_detector_mask
+from mobiledet.models.keras_darknet19 import darknet19_feature_extractor
 
 # Args
 argparser = argparse.ArgumentParser(
@@ -43,16 +44,16 @@ argparser.add_argument(
     '-c',
     '--classes_path',
     help='path to classes file, defaults to pascal_classes.txt',
-    default='model_data/drone_classes.txt')
+    default='model_data/pascal_classes.txt')
 
 # Default anchor boxes
 YOLO_ANCHORS = np.array(
     ((0.57273, 0.677385), (1.87446, 2.06253), (3.33843, 5.47434),
      (7.88282, 3.52778), (9.77052, 9.16828)))
 
-BATCH_SIZE = 16
-IMAGE_H    = 416
-IMAGE_W    = 416
+BATCH_SIZE = 4
+IMAGE_H    = 608
+IMAGE_W    = 608
 
 FEAT_W = IMAGE_W / 32
 FEAT_H = IMAGE_H / 32
@@ -79,9 +80,11 @@ def _main(args):
 
     H5_VALID_BOXES = np.array(h5_data['val/boxes'])
     H5_VALID_IMAGES = np.array(h5_data['val/images'])
+    # clear any previous sesson
+    K.clear_session()
 
-    model_body, model = create_model(anchors, class_names)
-    train_batch_gen = VOCBatchGenerator(H5_TRAIN_IMAGES, H5_TRAIN_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, voc_class_names, class_names)
+    model_body, model = create_model(anchors, class_names, load_pretrained=True)
+    train_batch_gen = VOCBatchGenerator(H5_TRAIN_IMAGES, H5_TRAIN_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, voc_class_names, class_names, jitter=True)
     valid_batch_gen = VOCBatchGenerator(H5_VALID_IMAGES, H5_VALID_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, voc_class_names, class_names)
     train(
         model,
@@ -138,23 +141,27 @@ def create_model(anchors, class_names, load_pretrained=False, freeze_body=False)
     matching_boxes_input = Input(shape=matching_boxes_shape)
 
     # Create model body.
-    yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names))
+    extra_detect_feats = True
+    
+    feature_model = darknet19_feature_extractor(image_input);
+    yolo_model = yolo_body_darknet_feature(feature_model, len(anchors), len(class_names), extra_detection_feature=extra_detect_feats)
     topless_yolo = Model(yolo_model.input, yolo_model.layers[-2].output)
 
     if load_pretrained:
         # Save topless yolo:
         topless_yolo_path = os.path.join('model_data', 'yolo_topless.h5')
-        if not os.path.exists(topless_yolo_path):
-            print("CREATING TOPLESS WEIGHTS FILE")
-            yolo_path = os.path.join('model_data', 'yolo.h5')
-            model_body = load_model(yolo_path)
-            model_body = Model(model_body.inputs, model_body.layers[-2].output)
-            model_body.save_weights(topless_yolo_path)
-        topless_yolo.load_weights(topless_yolo_path)
-
+        print("Loading pre-trained weights")
+        yolo_path = os.path.join('model_data', 'yolo.h5')
+        model_body = load_model(yolo_path)
+        # Only load weights before the conv20 layer( the layer right before x4 and x2 space_to_depth conversion)
+        model_body = Model(model_body.inputs, model_body.layers[-8].output)               
+        model_body.save_weights(topless_yolo_path)
+        feature_model.load_weights(topless_yolo_path)
+      
     if freeze_body:
-        for layer in topless_yolo.layers:
+        for layer in feature_model.layers:
             layer.trainable = False
+            
     final_layer = Conv2D(len(anchors)*(5+len(class_names)), (1, 1), activation='linear')(topless_yolo.output)
 
     model_body = Model(image_input, final_layer)
@@ -187,7 +194,8 @@ class VOCBatchGenerator:
                        feat_h, 
                        anchors,
                        voc_class_names,
-                       class_names):
+                       class_names, 
+                       jitter=False):
         self.model_w = model_w
         self.model_h = model_h
         self.feat_w = feat_w
@@ -197,21 +205,22 @@ class VOCBatchGenerator:
         self.H5_BOXES = H5_BOXES
         self.H5_IMAGES = H5_IMAGES
         self.anchors = anchors
-        self.unique_data_instances = 0
-  
+        self.unique_data_instances = self.H5_IMAGES.shape[0]
+        self.jitter = jitter
+
     def flow_from_hdf5(self):
         anchors = self.anchors   
-        self.unique_data_instances = self.H5_IMAGES.shape[0]
         while True:
             batch_images = []
             batch_boxes = []
             
             for i in range(BATCH_SIZE):        
                 image_data, bboxes = read_voc_datasets_train_batch(self.H5_IMAGES, self.H5_BOXES, self.voc_class_names, self.class_names)
-                image_data, bboxes = augment_image(image_data, bboxes, self.model_w, self.model_h, jitter=False)
+                image_data, bboxes = augment_image(image_data, bboxes, self.model_w, self.model_h, jitter=self.jitter)
 
                 orig_size = np.array([image_data.shape[1], image_data.shape[0]])
                 orig_size = np.expand_dims(orig_size, axis=0)
+                # normalize the image data 
                 image_data /= 255.
 
                 batch_images.append(image_data)
@@ -267,8 +276,11 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
 
     train_steps_per_epoch = train_batch_gen.unique_data_instances // BATCH_SIZE
     valid_steps_per_epoch = valid_batch_gen.unique_data_instances // BATCH_SIZE
+
+    print('train_steps_per_epoch=',train_steps_per_epoch);
+    print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 1 
+    num_epochs = 30 
 
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),

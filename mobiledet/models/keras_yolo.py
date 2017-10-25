@@ -10,7 +10,7 @@ from keras.models import Model
 
 from ..utils import compose
 from .keras_darknet19 import (DarknetConv2D, DarknetConv2D_BN_Leaky,
-                              darknet_body)
+                              darknet_body18, darknet_body13)
 from .keras_mobilenet import _depthwise_conv_block, relu6, mobile_net
 
 from keras.regularizers import l2
@@ -69,12 +69,46 @@ def space_to_depth_x4_output_shape(input_shape):
             input_shape[3]) if input_shape[1] else (input_shape[0], None, None,
                                                     16 * input_shape[3])
 
+def yolo_body_darknet_feature(darknet, num_anchors, num_classes, extra_detection_feature=False):
+    """Create YOLO_V2 model CNN body in Keras."""
+    feature_for_detection_layer0 = 'leaky_re_lu_8'
+    feature_for_detection_layer1 = 'leaky_re_lu_13'
+
+    inputs = darknet.inputs
+    conv20 = darknet.output
+
+    conv13 = darknet.get_layer(feature_for_detection_layer1).output
+    conv13 = DarknetConv2D_BN_Leaky(64, (1, 1))(conv13)
+    # TODO: Allow Keras Lambda to use func arguments for output_shape?
+    conv13_reshaped = Lambda(
+        space_to_depth_x2,
+        output_shape=space_to_depth_x2_output_shape,
+        name='space_to_depth_x2')(conv13)
+
+    if extra_detection_feature:
+        conv8 = darknet.get_layer(feature_for_detection_layer0).output
+        conv8 = DarknetConv2D_BN_Leaky(16, (1, 1))(conv8)
+        # TODO: Allow Keras Lambda to use func arguments for output_shape?
+        conv8_reshaped = Lambda(
+            space_to_depth_x4,
+            output_shape=space_to_depth_x4_output_shape,
+            name='space_to_depth_x4')(conv8)   
+
+        x = concatenate([conv8_reshaped, conv13_reshaped, conv20])
+    else:
+        x = concatenate([conv13_reshaped, conv20])
+
+    x = DarknetConv2D_BN_Leaky(1024, (3, 3))(x)
+    x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
+    return Model(inputs, x)
+
 def yolo_body_darknet19(inputs, num_anchors, num_classes, extra_detection_feature=False):
     """Create YOLO_V2 model CNN body in Keras."""
     feature_for_detection_layer0 = 'leaky_re_lu_8'
     feature_for_detection_layer1 = 'leaky_re_lu_13'
 
-    darknet = Model(inputs, darknet_body()(inputs))
+    darknet = Model(inputs, darknet_body18()(inputs))
+
     conv20 = compose(
         DarknetConv2D_BN_Leaky(1024, (3, 3)),
         DarknetConv2D_BN_Leaky(1024, (3, 3)))(darknet.output)

@@ -29,11 +29,13 @@ def brightness_augment(image):
     image1 = cv2.cvtColor(image1, cv2.COLOR_HSV2RGB)
     return image1
 
-def _convert_voc_box(boxes, voc_class_names, target_class_names):
+def _remap_object_boxes(boxes, class_names, target_class_names):
+    """ Remap original object labels into the interested target object labels
+    """
     drone_box = []
     for i in range(boxes.shape[0]):
         box = boxes[i]
-        voc_label = voc_class_names[box[0]]  
+        voc_label = class_names[box[0]]  
         if voc_label in target_class_names:
             dbox = copy.deepcopy(box)
             dbox[0] = target_class_names.index(voc_label)
@@ -44,16 +46,13 @@ def read_voc_datasets_train_batch(data_images, data_boxes, voc_class_names, targ
     found_valid = False
     while not found_valid:
         idx = np.random.choice(data_images.shape[0], replace=False)
-        #TODO:debug 
-        idx = 28
         batch_boxes = data_boxes[idx]
         batch_image = data_images[idx]
-        batch_boxes = batch_boxes.reshape((-1, 5))
-            
-        batch_boxes = _convert_voc_box(batch_boxes, voc_class_names, target_class_names)
-        
+        batch_boxes = batch_boxes.reshape((-1, 5))    
+        batch_boxes = _remap_object_boxes(batch_boxes, voc_class_names, target_class_names)s
         if len(batch_boxes) == 0:
             continue
+
         found_valid = True
         image = PIL.Image.open(io.BytesIO(batch_image))
         
@@ -64,7 +63,6 @@ def read_voc_datasets_train_batch(data_images, data_boxes, voc_class_names, targ
 
 def augment_image(image_data, bboxes, model_width, model_height, jitter=False):
     h, w, c = image_data.shape
-    
     if jitter:        
         scale = np.random.uniform() / 10. + 1.
         image_data = cv2.resize(image_data, (0,0), fx = scale, fy = scale)    
@@ -81,8 +79,8 @@ def augment_image(image_data, bboxes, model_width, model_height, jitter=False):
             image_data = cv2.flip(image_data, 1)
 
     image_data = cv2.resize(image_data, (model_height, model_width))
-
     bboxes2 = copy.deepcopy(bboxes)
+
     for bbox in bboxes2:
         for attr in (1,3): # adjust xmin and xmax
             if jitter: bbox[attr] = int(bbox[attr] * scale - offx)

@@ -32,10 +32,13 @@ def mobile_net(input_size=(224, 224, 3), include_top=True, n_classes=1000, alpha
     x = _conv_block(img_input, 32, alpha, strides=(2, 2))
     x = _depthwise_conv_block(x, 64,  alpha, depth_multiplier, block_id=1)
     x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, block_id=2, strides=(2, 2))
+
     x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, block_id=3)
     x = _depthwise_conv_block(x, 256, alpha, depth_multiplier, block_id=4, strides=(2, 2))
+
     x = _depthwise_conv_block(x, 256, alpha, depth_multiplier, block_id=5)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=6, strides=(2, 2))
+    
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=7)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=8)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=9)

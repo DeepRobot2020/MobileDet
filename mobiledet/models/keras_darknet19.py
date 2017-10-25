@@ -47,7 +47,7 @@ def bottleneck_x2_block(outer_filters, bottleneck_filters):
         DarknetConv2D_BN_Leaky(outer_filters, (3, 3)))
 
 
-def darknet_body():
+def darknet_body18():
     """Generate first 18 conv layers of Darknet-19."""
     return compose(
         DarknetConv2D_BN_Leaky(32, (3, 3)),
@@ -62,9 +62,25 @@ def darknet_body():
         MaxPooling2D(),
         bottleneck_x2_block(1024, 512))
 
+def darknet_body13():
+    """Generate first 18 conv layers of Darknet-19."""
+    return compose(
+        DarknetConv2D_BN_Leaky(32, (3, 3)),
+        MaxPooling2D(),
+        DarknetConv2D_BN_Leaky(64, (3, 3)),
+        MaxPooling2D(),
+        bottleneck_block(128, 64),
+        MaxPooling2D(),
+        bottleneck_block(256, 128),
+        MaxPooling2D(),
+        bottleneck_x2_block(512, 256))
 
-def darknet19(inputs):
+def darknet19_feature_extractor(inputs):
     """Generate Darknet-19 model for Imagenet classification."""
-    body = darknet_body()(inputs)
-    logits = DarknetConv2D(1000, (1, 1), activation='softmax')(body)
-    return Model(inputs, logits)
+    darknet = Model(inputs, darknet_body18()(inputs))
+
+    final_feature = compose(
+    DarknetConv2D_BN_Leaky(1024, (3, 3)),
+    DarknetConv2D_BN_Leaky(1024, (3, 3)))(darknet.output)
+    return Model(inputs, outputs=final_feature)
+

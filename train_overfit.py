@@ -18,7 +18,8 @@ from keras.layers import Input, Lambda
 from keras.models import Model
 
 from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobilenet,yolo_body_darknet19,
-                                     yolo_eval, yolo_head, yolo_loss)
+                                     yolo_eval, yolo_head, yolo_loss, yolo_body_darknet_feature)
+from mobiledet.models.keras_darknet19 import darknet19_feature_extractor
 from mobiledet.utils.draw_boxes import draw_boxes
 
 
@@ -84,7 +85,7 @@ def _main(args):
 
     # Box preprocessing.
     # Original boxes stored as 1D list of class, x_min, y_min, x_max, y_max.
-    boxes = voc['train/boxes'][1]
+    boxes = voc['train/boxes'][28]
     boxes = boxes.reshape((-1, 5))
     # Get extents as y_min, x_min, y_max, x_max, class for comparision with
     # model output.
@@ -123,9 +124,12 @@ def _main(args):
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
     # Create model body.
-    model_body = yolo_body_mobilenet(image_input, len(anchors), len(class_names), extra_detection_feature=False)
-    model_body = Model(image_input, model_body.output)
-        # TODO: Replace Lambda with custom Keras layer for loss.
+    feats_model = darknet19_feature_extractor(image_input);
+    model_body = yolo_body_darknet_feature(feats_model, len(anchors), len(class_names), extra_detection_feature=False)
+
+    # model_body.summary()
+
+    # TODO: Replace Lambda with custom Keras layer for loss.
     model_loss = Lambda(
         yolo_loss,
         output_shape=(1, ),
@@ -151,18 +155,20 @@ def _main(args):
     detectors_mask = np.expand_dims(detectors_mask, axis=0)
     matching_true_boxes = np.expand_dims(matching_true_boxes, axis=0)
 
-    num_steps = 1000
+    num_steps = 100
     # TODO: For full training, put preprocessing inside training loop.
     # for i in range(num_steps):
     #     loss = model.train_on_batch(
     #         [image_data, boxes, detectors_mask, matching_true_boxes],
     #         np.zeros(len(image_data)))
-    # model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
-    #           np.zeros(len(image_data)),
-    #           batch_size=1,
-    #           epochs=num_steps)
+
+    model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
+              np.zeros(len(image_data)),
+              batch_size=1,
+              verbose=1,
+              epochs=num_steps)
               
-    model.load_weights('trained_stage_1.h5')
+    model.save_weights('model_data/trained_stage_1.h5')
 
     # Create output variables for prediction.
     yolo_outputs = yolo_head(model_body.output, anchors, len(class_names))
