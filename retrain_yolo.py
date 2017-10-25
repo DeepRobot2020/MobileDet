@@ -43,16 +43,16 @@ argparser.add_argument(
     '-c',
     '--classes_path',
     help='path to classes file, defaults to pascal_classes.txt',
-    default='model_data/pascal_classes.txt')
+    default='model_data/drone_classes.txt')
 
 # Default anchor boxes
 YOLO_ANCHORS = np.array(
     ((0.57273, 0.677385), (1.87446, 2.06253), (3.33843, 5.47434),
      (7.88282, 3.52778), (9.77052, 9.16828)))
 
-BATCH_SIZE = 1
-IMAGE_H = 416
-IMAGE_W = 416
+BATCH_SIZE = 16
+IMAGE_H    = 416
+IMAGE_W    = 416
 
 FEAT_W = IMAGE_W / 32
 FEAT_H = IMAGE_H / 32
@@ -61,10 +61,11 @@ def _main(args):
     data_path    = os.path.expanduser(args.data_path)
     classes_path = os.path.expanduser(args.classes_path)
     anchors_path = os.path.expanduser(args.anchors_path)
-    drone_classes_path='model_data/drone_classes.txt'
 
-    voc_class_names  = get_classes(classes_path)
-    class_names  = get_classes(drone_classes_path)
+    voc_classes_path='model_data/pascal_classes.txt'
+    voc_class_names  = get_classes(voc_classes_path)
+
+    class_names  = get_classes(classes_path)
     print(voc_class_names)
     print(class_names)
     
@@ -196,10 +197,11 @@ class VOCBatchGenerator:
         self.H5_BOXES = H5_BOXES
         self.H5_IMAGES = H5_IMAGES
         self.anchors = anchors
-
+        self.unique_data_instances = 0
+  
     def flow_from_hdf5(self):
         anchors = self.anchors   
-        num_img = self.H5_IMAGES.shape[0]
+        self.unique_data_instances = self.H5_IMAGES.shape[0]
         while True:
             batch_images = []
             batch_boxes = []
@@ -222,7 +224,6 @@ class VOCBatchGenerator:
                 boxes = np.concatenate((boxes_xy, boxes_wh, boxes[:, 0:1]), axis=1)
                 batch_boxes.append(boxes)
 
-            
             # find the max number of boxes
             max_boxes = 0
             for boxz in batch_boxes:
@@ -238,7 +239,6 @@ class VOCBatchGenerator:
                         
             batch_images = np.array(batch_images)
             batch_boxes = np.array(batch_boxes)
-            # print('=================>',batch_boxes.shape)
             detectors_mask, matching_true_boxes = yolo_get_detector_mask(batch_boxes, anchors, model_shape=[self.model_h, self.model_w])
             X_train = [batch_images, batch_boxes, detectors_mask, matching_true_boxes]
             y_train = np.zeros(len(batch_images))
@@ -260,45 +260,54 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
             'yolo_loss': lambda y_true, y_pred: y_pred
         })  # This is a hack to use the custom loss function in the last layer.
 
-
     logging = TensorBoard()
     checkpoint = ModelCheckpoint("trained_stage_3_best.h5", monitor='val_loss',
                                  save_weights_only=True, save_best_only=True)
     early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=15, verbose=1, mode='auto')
 
+    train_steps_per_epoch = train_batch_gen.unique_data_instances // BATCH_SIZE
+    valid_steps_per_epoch = valid_batch_gen.unique_data_instances // BATCH_SIZE
+    
+    num_epochs = 1 
+
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
-                        # validation_data = valid_batch_gen.flow_from_hdf5(),
-                        steps_per_epoch = 2000 // BATCH_SIZE,
-                        # validation_steps= 1000 // BATCH_SIZE,
+                        validation_data = valid_batch_gen.flow_from_hdf5(),
+                        steps_per_epoch = train_steps_per_epoch,
+                        validation_steps= valid_steps_per_epoch,
                         callbacks       = [checkpoint, logging],
-                        epochs          = 1,
+                        epochs          = num_epochs,
                         workers=1, 
                         verbose=1)
     model.save_weights('trained_stage_1.h5')
 
-    # model.compile(
-    #     optimizer='adam', loss={
-    #         'yolo_loss': lambda y_true, y_pred: y_pred
-    #     })  # This is a hack to use the custom loss function in the last layer.
+    model.compile(
+        optimizer='adam', loss={
+            'yolo_loss': lambda y_true, y_pred: y_pred
+        })  # This is a hack to use the custom loss function in the last layer.
 
 
-    # model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
-    #           np.zeros(len(image_data)),
-    #           validation_split=0.1,
-    #           batch_size=8,
-    #           epochs=30,
-    #           callbacks=[logging])
+    model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
+                        validation_data = valid_batch_gen.flow_from_hdf5(),
+                        steps_per_epoch = train_steps_per_epoch,
+                        validation_steps= valid_steps_per_epoch,
+                        callbacks       = [checkpoint, logging],
+                        epochs          = num_epochs,
+                        workers=1, 
+                        verbose=1)
 
-    # model.save_weights('trained_stage_2.h5')
+    model.save_weights('trained_stage_2.h5')
 
-    # model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
-    #           np.zeros(len(image_data)),
-    #           validation_split=0.1,
-    #           batch_size=8,
-    #           epochs=30,
-    #           callbacks=[logging, checkpoint, early_stopping])
 
-    # model.save_weights('trained_stage_3.h5')
+    model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
+                        validation_data = valid_batch_gen.flow_from_hdf5(),
+                        steps_per_epoch = train_steps_per_epoch,
+                        validation_steps= valid_steps_per_epoch,
+                        callbacks       = [checkpoint, logging],
+                        epochs          = num_epochs,
+                        workers=1, 
+                        verbose=1)
+
+    model.save_weights('trained_stage_3.h5')
 
 def draw(model_body, class_names, anchors, image_data, image_set='val',
             weights_name='trained_stage_3_best.h5', out_path="output_images", save_all=True):
