@@ -11,8 +11,30 @@ from keras.models import Model
 from ..utils import compose
 from .keras_darknet19 import (DarknetConv2D, DarknetConv2D_BN_Leaky,
                               darknet_body)
+from .keras_mobilenet import _depthwise_conv_block, relu6, mobile_net
+
+from keras.regularizers import l2
+from keras.layers.merge import concatenate
+from keras.layers import Lambda, Conv2D, BatchNormalization, Activation
+from keras.applications.mobilenet import MobileNet
+from keras.applications.resnet50 import ResNet50
+from keras.applications.vgg19 import VGG19
 
 sys.path.append('..')
+
+def yolo_get_detector_mask(boxes, anchors, model_shape=[416, 416]):
+    '''
+    Precompute detectors_mask and matching_true_boxes for training.
+    Detectors mask is 1 for each spatial position in the final conv layer and
+    anchor that should be active for the given boxes and 0 otherwise.
+    Matching true boxes gives the regression targets for the ground truth box
+    that caused a detector to be active or 0 otherwise.
+    '''
+    detectors_mask = [0 for i in range(len(boxes))]
+    matching_true_boxes = [0 for i in range(len(boxes))]
+    for i, box in enumerate(boxes):
+        detectors_mask[i], matching_true_boxes[i] = preprocess_true_boxes(box, anchors, model_shape)
+    return np.array(detectors_mask), np.array(matching_true_boxes)
 
 def space_to_depth_x2(x):
     """Thin wrapper for Tensorflow space_to_depth with block_size=2."""
@@ -47,27 +69,42 @@ def space_to_depth_x4_output_shape(input_shape):
             input_shape[3]) if input_shape[1] else (input_shape[0], None, None,
                                                     16 * input_shape[3])
 
-def yolo_body_darknet19(inputs, num_anchors, num_classes, extra_feat=False):
+def yolo_body_darknet19(inputs, num_anchors, num_classes, extra_detection_feature=False):
     """Create YOLO_V2 model CNN body in Keras."""
+    feature_for_detection_layer0 = 'leaky_re_lu_8'
+    feature_for_detection_layer1 = 'leaky_re_lu_13'
+
     darknet = Model(inputs, darknet_body()(inputs))
     conv20 = compose(
         DarknetConv2D_BN_Leaky(1024, (3, 3)),
         DarknetConv2D_BN_Leaky(1024, (3, 3)))(darknet.output)
 
-    conv13 = darknet.layers[43].output
-    conv21 = DarknetConv2D_BN_Leaky(64, (1, 1))(conv13)
+    conv13 = darknet.get_layer(feature_for_detection_layer1).output
+    conv13 = DarknetConv2D_BN_Leaky(64, (1, 1))(conv13)
     # TODO: Allow Keras Lambda to use func arguments for output_shape?
-    conv21_reshaped = Lambda(
+    conv13_reshaped = Lambda(
         space_to_depth_x2,
         output_shape=space_to_depth_x2_output_shape,
-        name='space_to_depth_x2')(conv21)
+        name='space_to_depth_x2')(conv13)
 
-    x = concatenate([conv21_reshaped, conv20])
+    if extra_detection_feature:
+        conv8 = darknet.get_layer(feature_for_detection_layer0).output
+        conv8 = DarknetConv2D_BN_Leaky(16, (1, 1))(conv8)
+        # TODO: Allow Keras Lambda to use func arguments for output_shape?
+        conv8_reshaped = Lambda(
+            space_to_depth_x4,
+            output_shape=space_to_depth_x4_output_shape,
+            name='space_to_depth_x4')(conv8)   
+
+        x = concatenate([conv8_reshaped, conv13_reshaped, conv20])
+    else:
+        x = concatenate([conv13_reshaped, conv20])
+
     x = DarknetConv2D_BN_Leaky(1024, (3, 3))(x)
     x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
     return Model(inputs, x)
 
-def yolo_body_mobilenet(inputs, num_classes, num_anchors):
+def yolo_body_mobilenet(inputs, num_anchors, num_classes, extra_detection_feature=False):
     """
     Mobile Detector Implementation
     :param feature_extractor:
@@ -75,28 +112,46 @@ def yolo_body_mobilenet(inputs, num_classes, num_anchors):
     :param num_anchors:
     :return:
     """
-    inputs = feature_extractor.model.output
-    i = feature_extractor.model.get_layer(fine_grained_layers).output
+    feature_for_detection_layer0 = 'conv_pw_5_relu'
+    feature_for_detection_layer1 = 'conv_pw_11_relu'
 
-    x = _depthwise_conv_block(inputs, 1024, 1.0, block_id=14)
+    base_model = MobileNet(input_tensor=inputs, include_top=False, weights=None)
+    feats = base_model.output
+
+    x = _depthwise_conv_block(feats, 1024, 1.0, block_id=14)
     x = _depthwise_conv_block(x, 1024, 1.0, block_id=15)
     x2 = x
 
     # Reroute
-    x = Conv2D(64, (1, 1), padding='same', use_bias=False, strides=(1, 1))(i)
+    i2 = base_model.get_layer(feature_for_detection_layer1).output
+    x = Conv2D(64, (1, 1), padding='same', use_bias=False, strides=(1, 1))(i2)
     x = BatchNormalization()(x)
     x = Activation(relu6)(x)
 
-    x = Lambda(lambda x: tf.space_to_depth(x, block_size=2),
+    x1 = Lambda(lambda x: tf.space_to_depth(x, block_size=2),
                lambda shape: [shape[0], shape[1] / 2, shape[2] / 2, 2 * 2 * shape[-1]] if shape[1] else
                [shape[0], None, None, 2 * 2 * shape[-1]],
                name='space_to_depth_x2')(x)
-    x = concatenate([x, x2])
+
+    if extra_detection_feature:
+        # Reroute
+        i1 = base_model.get_layer(feature_for_detection_layer0).output
+        x = Conv2D(16, (1, 1), padding='same', use_bias=False, strides=(1, 1))(i1)
+        x = BatchNormalization()(x)
+        x0 = Activation(relu6)(x)
+        x0 = Lambda(
+            space_to_depth_x4,
+            output_shape=space_to_depth_x4_output_shape,
+            name='space_to_depth_x4')(x0)   
+        x = concatenate([x0, x1, x2])
+    else:
+        x = concatenate([x1, x2])
 
     x = _depthwise_conv_block(x, 1024, 1.0, block_id=16)
     x = Conv2D(num_anchors * (num_classes + 5), (1, 1))(x)
 
-    return x
+    model = Model(inputs=base_model.input, outputs=x)
+    return model
 
 
 def yolo_head(feats, anchors, num_classes):
@@ -451,7 +506,6 @@ def preprocess_true_boxes(true_boxes, anchors, image_size):
             if iou > best_iou:
                 best_iou = iou
                 best_anchor = k
-
         if best_iou > 0:
             detectors_mask[i, j, best_anchor] = 1
             adjusted_box = np.array(

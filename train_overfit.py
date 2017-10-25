@@ -17,9 +17,10 @@ from keras import backend as K
 from keras.layers import Input, Lambda
 from keras.models import Model
 
-from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body,
+from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobilenet,yolo_body_darknet19,
                                      yolo_eval, yolo_head, yolo_loss)
 from mobiledet.utils.draw_boxes import draw_boxes
+
 
 YOLO_ANCHORS = np.array(
     ((0.57273, 0.677385), (1.87446, 2.06253), (3.33843, 5.47434),
@@ -32,7 +33,7 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help='path to HDF5 file containing pascal voc dataset',
-    default='~/datasets/VOCdevkit/pascal_voc_07_12.hdf5')
+    default='~/data/PascalVOC/VOCdevkit/pascal_voc_07_12.hdf5')
 
 argparser.add_argument(
     '-a',
@@ -44,7 +45,7 @@ argparser.add_argument(
     '-c',
     '--classes_path',
     help='path to classes file, defaults to pascal_classes.txt',
-    default='model_data/pascal_classes.txt')
+    default='model_data/drone_classes.txt')
 
 
 def _main(args):
@@ -65,18 +66,25 @@ def _main(args):
         anchors = YOLO_ANCHORS
 
     voc = h5py.File(voc_path, 'r')
+    
     image = PIL.Image.open(io.BytesIO(voc['train/images'][28]))
     orig_size = np.array([image.width, image.height])
     orig_size = np.expand_dims(orig_size, axis=0)
 
+    net_width  = 416
+    net_height = 416
+    
+    feats_width = net_width / 32
+    feats_height = net_height / 32
+
     # Image preprocessing.
-    image = image.resize((416, 416), PIL.Image.BICUBIC)
+    image = image.resize((net_width, net_height), PIL.Image.BICUBIC)
     image_data = np.array(image, dtype=np.float)
     image_data /= 255.
 
     # Box preprocessing.
     # Original boxes stored as 1D list of class, x_min, y_min, x_max, y_max.
-    boxes = voc['train/boxes'][28]
+    boxes = voc['train/boxes'][1]
     boxes = boxes.reshape((-1, 5))
     # Get extents as y_min, x_min, y_max, x_max, class for comparision with
     # model output.
@@ -94,13 +102,13 @@ def _main(args):
     # anchor that should be active for the given boxes and 0 otherwise.
     # Matching true boxes gives the regression targets for the ground truth box
     # that caused a detector to be active or 0 otherwise.
-    detectors_mask_shape = (13, 13, 5, 1)
-    matching_boxes_shape = (13, 13, 5, 5)
+    detectors_mask_shape = (feats_height, feats_width, 5, 1)
+    matching_boxes_shape = (feats_height, feats_width, 5, 5)
     detectors_mask, matching_true_boxes = preprocess_true_boxes(boxes, anchors,
-                                                                [416, 416])
+                                                                [net_height, net_width])
 
     # Create model input layers.
-    image_input = Input(shape=(416, 416, 3))
+    image_input = Input(shape=(net_height , net_width, 3))
     boxes_input = Input(shape=(None, 5))
     detectors_mask_input = Input(shape=detectors_mask_shape)
     matching_boxes_input = Input(shape=matching_boxes_shape)
@@ -115,23 +123,23 @@ def _main(args):
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
     # Create model body.
-    model_body = yolo_body(image_input, len(anchors), len(class_names))
+    model_body = yolo_body_mobilenet(image_input, len(anchors), len(class_names), extra_detection_feature=False)
     model_body = Model(image_input, model_body.output)
-    # Place model loss on CPU to reduce GPU memory usage.
-    with tf.device('/cpu:0'):
         # TODO: Replace Lambda with custom Keras layer for loss.
-        model_loss = Lambda(
-            yolo_loss,
-            output_shape=(1, ),
-            name='yolo_loss',
-            arguments={'anchors': anchors,
-                       'num_classes': len(class_names)})([
-                           model_body.output, boxes_input,
-                           detectors_mask_input, matching_boxes_input
-                       ])
+    model_loss = Lambda(
+        yolo_loss,
+        output_shape=(1, ),
+        name='yolo_loss',
+        arguments={'anchors': anchors,
+                    'num_classes': len(class_names)})([
+                        model_body.output, boxes_input,
+                        detectors_mask_input, matching_boxes_input
+                    ])
+
     model = Model(
         [image_input, boxes_input, detectors_mask_input,
          matching_boxes_input], model_loss)
+
     model.compile(
         optimizer='adam', loss={
             'yolo_loss': lambda y_true, y_pred: y_pred
@@ -149,11 +157,12 @@ def _main(args):
     #     loss = model.train_on_batch(
     #         [image_data, boxes, detectors_mask, matching_true_boxes],
     #         np.zeros(len(image_data)))
-    model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
-              np.zeros(len(image_data)),
-              batch_size=1,
-              epochs=num_steps)
-    model.save_weights('overfit_weights.h5')
+    # model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
+    #           np.zeros(len(image_data)),
+    #           batch_size=1,
+    #           epochs=num_steps)
+              
+    model.load_weights('trained_stage_1.h5')
 
     # Create output variables for prediction.
     yolo_outputs = yolo_head(model_body.output, anchors, len(class_names))

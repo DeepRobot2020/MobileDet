@@ -9,14 +9,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 import PIL
 import tensorflow as tf
+import h5py
+
 from keras import backend as K
 from keras.layers import Input, Lambda, Conv2D
 from keras.models import load_model, Model
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
 
-from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body,
-                                     yolo_eval, yolo_head, yolo_loss)
+from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_darknet19,
+                                     yolo_body_mobilenet, yolo_eval, yolo_head, yolo_loss)
 from mobiledet.utils.draw_boxes import draw_boxes
+
+from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, augment_image
+from mobiledet.models.keras_yolo import yolo_get_detector_mask
 
 # Args
 argparser = argparse.ArgumentParser(
@@ -26,7 +31,7 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help="path to numpy data file (.npz) containing np.object array 'boxes' and np.uint8 array 'images'",
-    default=os.path.join('..', 'DATA', 'underwater_data.npz'))
+    default='~/data/PascalVOC/VOCdevkit/pascal_voc_07_12.hdf5')
 
 argparser.add_argument(
     '-a',
@@ -38,51 +43,51 @@ argparser.add_argument(
     '-c',
     '--classes_path',
     help='path to classes file, defaults to pascal_classes.txt',
-    default=os.path.join('..', 'DATA', 'underwater_classes.txt'))
+    default='model_data/pascal_classes.txt')
 
 # Default anchor boxes
 YOLO_ANCHORS = np.array(
     ((0.57273, 0.677385), (1.87446, 2.06253), (3.33843, 5.47434),
      (7.88282, 3.52778), (9.77052, 9.16828)))
 
+BATCH_SIZE = 1
+IMAGE_H = 416
+IMAGE_W = 416
+
+FEAT_W = IMAGE_W / 32
+FEAT_H = IMAGE_H / 32
+
 def _main(args):
-    data_path = os.path.expanduser(args.data_path)
+    data_path    = os.path.expanduser(args.data_path)
     classes_path = os.path.expanduser(args.classes_path)
     anchors_path = os.path.expanduser(args.anchors_path)
+    drone_classes_path='model_data/drone_classes.txt'
 
-    class_names = get_classes(classes_path)
-    anchors = get_anchors(anchors_path)
-
-    data = np.load(data_path) # custom data saved as a numpy file.
-    #  has 2 arrays: an object array 'boxes' (variable length of boxes in each image)
-    #  and an array of images 'images'
-
-    image_data, boxes = process_data(data['images'], data['boxes'])
-
+    voc_class_names  = get_classes(classes_path)
+    class_names  = get_classes(drone_classes_path)
+    print(voc_class_names)
+    print(class_names)
+    
+    anchors      = get_anchors(anchors_path)
+    # custom data saved as a numpy file.
+    h5_data = h5py.File(data_path, 'r')
     anchors = YOLO_ANCHORS
+    
+    H5_TRAIN_BOXES = np.array(h5_data['train/boxes'])
+    H5_TRAIN_IMAGES = np.array(h5_data['train/images'])
 
-    detectors_mask, matching_true_boxes = get_detector_mask(boxes, anchors)
+    H5_VALID_BOXES = np.array(h5_data['val/boxes'])
+    H5_VALID_IMAGES = np.array(h5_data['val/images'])
 
     model_body, model = create_model(anchors, class_names)
-
+    train_batch_gen = VOCBatchGenerator(H5_TRAIN_IMAGES, H5_TRAIN_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, voc_class_names, class_names)
+    valid_batch_gen = VOCBatchGenerator(H5_VALID_IMAGES, H5_VALID_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, voc_class_names, class_names)
     train(
         model,
         class_names,
-        anchors,
-        image_data,
-        boxes,
-        detectors_mask,
-        matching_true_boxes
-    )
-
-    draw(model_body,
-        class_names,
-        anchors,
-        image_data,
-        image_set='val', # assumes training/validation split is 0.9
-        weights_name='trained_stage_3_best.h5',
-        save_all=False)
-
+        anchors, 
+        train_batch_gen,
+        valid_batch_gen)
 
 def get_classes(classes_path):
     '''loads the classes'''
@@ -102,64 +107,8 @@ def get_anchors(anchors_path):
         Warning("Could not open anchors file, using default.")
         return YOLO_ANCHORS
 
-def process_data(images, boxes=None):
-    '''processes the data'''
-    images = [PIL.Image.fromarray(i) for i in images]
-    orig_size = np.array([images[0].width, images[0].height])
-    orig_size = np.expand_dims(orig_size, axis=0)
 
-    # Image preprocessing.
-    processed_images = [i.resize((416, 416), PIL.Image.BICUBIC) for i in images]
-    processed_images = [np.array(image, dtype=np.float) for image in processed_images]
-    processed_images = [image/255. for image in processed_images]
-
-    if boxes is not None:
-        # Box preprocessing.
-        # Original boxes stored as 1D list of class, x_min, y_min, x_max, y_max.
-        boxes = [box.reshape((-1, 5)) for box in boxes]
-        # Get extents as y_min, x_min, y_max, x_max, class for comparision with
-        # model output.
-        boxes_extents = [box[:, [2, 1, 4, 3, 0]] for box in boxes]
-
-        # Get box parameters as x_center, y_center, box_width, box_height, class.
-        boxes_xy = [0.5 * (box[:, 3:5] + box[:, 1:3]) for box in boxes]
-        boxes_wh = [box[:, 3:5] - box[:, 1:3] for box in boxes]
-        boxes_xy = [boxxy / orig_size for boxxy in boxes_xy]
-        boxes_wh = [boxwh / orig_size for boxwh in boxes_wh]
-        boxes = [np.concatenate((boxes_xy[i], boxes_wh[i], box[:, 0:1]), axis=1) for i, box in enumerate(boxes)]
-
-        # find the max number of boxes
-        max_boxes = 0
-        for boxz in boxes:
-            if boxz.shape[0] > max_boxes:
-                max_boxes = boxz.shape[0]
-
-        # add zero pad for training
-        for i, boxz in enumerate(boxes):
-            if boxz.shape[0]  < max_boxes:
-                zero_padding = np.zeros( (max_boxes-boxz.shape[0], 5), dtype=np.float32)
-                boxes[i] = np.vstack((boxz, zero_padding))
-
-        return np.array(processed_images), np.array(boxes)
-    else:
-        return np.array(processed_images)
-
-def get_detector_mask(boxes, anchors):
-    '''
-    Precompute detectors_mask and matching_true_boxes for training.
-    Detectors mask is 1 for each spatial position in the final conv layer and
-    anchor that should be active for the given boxes and 0 otherwise.
-    Matching true boxes gives the regression targets for the ground truth box
-    that caused a detector to be active or 0 otherwise.
-    '''
-    detectors_mask = [0 for i in range(len(boxes))]
-    matching_true_boxes = [0 for i in range(len(boxes))]
-    for i, box in enumerate(boxes):
-        detectors_mask[i], matching_true_boxes[i] = preprocess_true_boxes(box, anchors, [416, 416])
-
-    return np.array(detectors_mask), np.array(matching_true_boxes)
-
-def create_model(anchors, class_names, load_pretrained=True, freeze_body=True):
+def create_model(anchors, class_names, load_pretrained=False, freeze_body=False):
     '''
     returns the body of the model and the model
 
@@ -177,17 +126,18 @@ def create_model(anchors, class_names, load_pretrained=True, freeze_body=True):
 
     '''
 
-    detectors_mask_shape = (13, 13, 5, 1)
-    matching_boxes_shape = (13, 13, 5, 5)
+    detectors_mask_shape = (FEAT_H, FEAT_W, 5, 1)
+    matching_boxes_shape = (FEAT_H, FEAT_W, 5, 5)
 
     # Create model input layers.
-    image_input = Input(shape=(416, 416, 3))
+    image_input = Input(shape=(IMAGE_H, IMAGE_W, 3))
     boxes_input = Input(shape=(None, 5))
+
     detectors_mask_input = Input(shape=detectors_mask_shape)
     matching_boxes_input = Input(shape=matching_boxes_shape)
 
     # Create model body.
-    yolo_model = yolo_body(image_input, len(anchors), len(class_names))
+    yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names))
     topless_yolo = Model(yolo_model.input, yolo_model.layers[-2].output)
 
     if load_pretrained:
@@ -227,7 +177,75 @@ def create_model(anchors, class_names, load_pretrained=True, freeze_body=True):
 
     return model_body, model
 
-def train(model, class_names, anchors, image_data, boxes, detectors_mask, matching_true_boxes, validation_split=0.1):
+class VOCBatchGenerator:
+    def __init__(self, H5_IMAGES, 
+                       H5_BOXES,
+                       model_w, 
+                       model_h, 
+                       feat_w,
+                       feat_h, 
+                       anchors,
+                       voc_class_names,
+                       class_names):
+        self.model_w = model_w
+        self.model_h = model_h
+        self.feat_w = feat_w
+        self.feat_h = feat_h
+        self.voc_class_names =  voc_class_names
+        self.class_names =  class_names        
+        self.H5_BOXES = H5_BOXES
+        self.H5_IMAGES = H5_IMAGES
+        self.anchors = anchors
+
+    def flow_from_hdf5(self):
+        anchors = self.anchors   
+        num_img = self.H5_IMAGES.shape[0]
+        while True:
+            batch_images = []
+            batch_boxes = []
+            
+            for i in range(BATCH_SIZE):        
+                image_data, bboxes = read_voc_datasets_train_batch(self.H5_IMAGES, self.H5_BOXES, self.voc_class_names, self.class_names)
+                image_data, bboxes = augment_image(image_data, bboxes, self.model_w, self.model_h, jitter=False)
+
+                orig_size = np.array([image_data.shape[1], image_data.shape[0]])
+                orig_size = np.expand_dims(orig_size, axis=0)
+                image_data /= 255.
+
+                batch_images.append(image_data)
+                
+                boxes = bboxes.reshape((-1, 5))
+                boxes_xy = 0.5 * (boxes[:, 3:5] + boxes[:, 1:3])
+                boxes_wh = boxes[:, 3:5] - boxes[:, 1:3]
+                boxes_xy = boxes_xy / orig_size
+                boxes_wh = boxes_wh / orig_size
+                boxes = np.concatenate((boxes_xy, boxes_wh, boxes[:, 0:1]), axis=1)
+                batch_boxes.append(boxes)
+
+            
+            # find the max number of boxes
+            max_boxes = 0
+            for boxz in batch_boxes:
+                if boxz.shape[0] > max_boxes:
+                    max_boxes = boxz.shape[0]
+            
+            # add zero pad for training
+            for i, boxz in enumerate(batch_boxes):
+                if boxz.shape[0]  < max_boxes:
+                    zero_padding = np.zeros( (max_boxes-boxz.shape[0], 5), dtype=np.float32)
+                    batch_boxes[i] = np.vstack((boxz, zero_padding))
+
+                        
+            batch_images = np.array(batch_images)
+            batch_boxes = np.array(batch_boxes)
+            # print('=================>',batch_boxes.shape)
+            detectors_mask, matching_true_boxes = yolo_get_detector_mask(batch_boxes, anchors, model_shape=[self.model_h, self.model_w])
+            X_train = [batch_images, batch_boxes, detectors_mask, matching_true_boxes]
+            y_train = np.zeros(len(batch_images))
+            yield X_train, y_train
+    
+
+def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validation_split=0.1):
     '''
     retrain/fine-tune the model
 
@@ -248,41 +266,39 @@ def train(model, class_names, anchors, image_data, boxes, detectors_mask, matchi
                                  save_weights_only=True, save_best_only=True)
     early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=15, verbose=1, mode='auto')
 
-    model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
-              np.zeros(len(image_data)),
-              validation_split=validation_split,
-              batch_size=32,
-              epochs=5,
-              callbacks=[logging])
+    model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
+                        # validation_data = valid_batch_gen.flow_from_hdf5(),
+                        steps_per_epoch = 2000 // BATCH_SIZE,
+                        # validation_steps= 1000 // BATCH_SIZE,
+                        callbacks       = [checkpoint, logging],
+                        epochs          = 1,
+                        workers=1, 
+                        verbose=1)
     model.save_weights('trained_stage_1.h5')
 
-    model_body, model = create_model(anchors, class_names, load_pretrained=False, freeze_body=False)
-
-    model.load_weights('trained_stage_1.h5')
-
-    model.compile(
-        optimizer='adam', loss={
-            'yolo_loss': lambda y_true, y_pred: y_pred
-        })  # This is a hack to use the custom loss function in the last layer.
+    # model.compile(
+    #     optimizer='adam', loss={
+    #         'yolo_loss': lambda y_true, y_pred: y_pred
+    #     })  # This is a hack to use the custom loss function in the last layer.
 
 
-    model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
-              np.zeros(len(image_data)),
-              validation_split=0.1,
-              batch_size=8,
-              epochs=30,
-              callbacks=[logging])
+    # model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
+    #           np.zeros(len(image_data)),
+    #           validation_split=0.1,
+    #           batch_size=8,
+    #           epochs=30,
+    #           callbacks=[logging])
 
-    model.save_weights('trained_stage_2.h5')
+    # model.save_weights('trained_stage_2.h5')
 
-    model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
-              np.zeros(len(image_data)),
-              validation_split=0.1,
-              batch_size=8,
-              epochs=30,
-              callbacks=[logging, checkpoint, early_stopping])
+    # model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
+    #           np.zeros(len(image_data)),
+    #           validation_split=0.1,
+    #           batch_size=8,
+    #           epochs=30,
+    #           callbacks=[logging, checkpoint, early_stopping])
 
-    model.save_weights('trained_stage_3.h5')
+    # model.save_weights('trained_stage_3.h5')
 
 def draw(model_body, class_names, anchors, image_data, image_set='val',
             weights_name='trained_stage_3_best.h5', out_path="output_images", save_all=True):
