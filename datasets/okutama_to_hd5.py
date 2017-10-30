@@ -87,10 +87,9 @@ def get_video_file(label_file, video_path):
     for file in os.listdir(video_path):
         if fnmatch.fnmatch(file, video_prefix + '.*'):
             video_file = file
-    video_file = os.path.join(video_path, video_file)
+            video_file = os.path.join(video_path, video_file)
     assert(os.path.exists(video_file))# this should never happens 
     return video_file
-
 
 def get_video_frames(video_path):
     """ Convert video file into a list of jpeg images

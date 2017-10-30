@@ -29,7 +29,12 @@ parser.add_argument(
     help='path to Okutama Action videos directory',
     default='~/data/UAV123/UAV123_10fps')
 
+seq_path = '~/data/UAV123/UAV123_10fps/data_seq/UAV123_10fps/'
+ann_path = '~/data/UAV123/UAV123_10fps/anno/UAV123_10fps/'
 
+seq_path = os.path.expanduser(seq_path)
+ann_path = os.path.expanduser(ann_path)
+  
 def find_car_person_folders(seq_path):    
     """ Find folders with car or person pictures
     """
@@ -37,18 +42,57 @@ def find_car_person_folders(seq_path):
     folders = os.listdir(seq_path)
     if len(folders):
         print('No folders in ' + seq_path)
-    person_folders = []
-    car_folders = []
+    car_person_folders = []
     for folder in folders:
         person_match = re.search(r'person\d+$', folder)
         car_match = re.search(r'car\d+$', folder)
         if person_match is not None:
-            person_folders.append(person_match.group(0))
+            car_person_folders.append(person_match.group(0))
             print('Adding folder ' + person_match.group(0))
         elif car_match is not None:
-            car_folders.append(car_match.group(0))
+            car_person_folders.append(car_match.group(0))
             print('Adding folder ' + car_match.group(0))
-    return person_folders, car_folders
+    return car_person_folders
+
+def find_car_person_anns(ann_path):
+    """Find annoation files related to car and persons
+    """
+    car_re = r'car\d(_\d)?.txt'
+    person_re = r'person\d(_\d)?.txt'
+    car_person_ann = []
+    for ann in os.listdir(ann_path):
+        car_match = re.match(car_re, ann)
+        person_match = re.match(person_re, ann)
+        if car_match:
+            car_person_ann.append(car_match.group(0))
+        elif person_match:
+            car_person_ann.append(person_match.group(0))
+    return car_person_ann
+
+def match_dataseq_anno(seq_path, ann_path):
+    car_person_folders = find_car_person_folders(seq_path)
+    car_person_anns = find_car_person_anns(seq_path)
+    parsed_ann = []
+    for folder in car_person_folders:
+        total_images = os.listdir(os.path.join(seq_path, folder))
+        print('Folder name: ' + folder)
+        print('Total images: ' + str(total_images))
+
+        ann_name1 = folder + '.txt'
+        ann_name2 = folder + '_'
+        anns = [ann for ann in car_person_anns if ann_name1 in ann or ann_name2 in ann]
+        anns = sorted(anns)
+        anns = ''.join([open(f).read() for f in anns])
+        anns = anns.split('\n')
+        for ann in anns:
+            ann = ann.split(',')
+            try:
+                ann = [int (a) for a in ann]
+            except ValueError:
+                ann = [0, 0, 0, 0]
+        parsed_ann.append(anns)
+        print('Total annotations: ' + strlen((parsed_ann))
+    return car_person_folders, parsed_ann
 
 def get_video_file(label_file, video_path):  
     """ Get the video file associated with the label file
