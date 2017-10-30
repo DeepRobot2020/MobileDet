@@ -21,11 +21,13 @@ train_set = [('2012', 'train')]
 val_set = [('2012', 'val')]
 test_set = [('2007', 'test')]
 
-classes = [
+voc_classes = [
     "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat",
     "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person",
     "pottedplant", "sheep", "sofa", "train", "tvmonitor"
 ]
+# We only care about below two classes (for now)
+aerial_classes = ["person", "bus", "car", "train"]
 
 parser = argparse.ArgumentParser(
     description='Convert Pascal VOC 2007+2012 detection dataset to HDF5.')
@@ -63,16 +65,15 @@ def get_boxes_for_id(voc_path, year, image_id):
     for obj in root.iter('object'):
         difficult = obj.find('difficult').text
         label = obj.find('name').text
-        if label not in classes or int(
+        if label not in aerial_classes or int(
                 difficult) == 1:  # exclude difficult or unlisted classes
             continue
         xml_box = obj.find('bndbox')
-        bbox = (classes.index(label), int(xml_box.find('xmin').text),
+        bbox = (aerial_classes.index(label), int(xml_box.find('xmin').text),
                 int(xml_box.find('ymin').text), int(xml_box.find('xmax').text),
                 int(xml_box.find('ymax').text))
         boxes.extend(bbox)
     return np.array(boxes)  # .T  # return transpose so last dimension is variable length
-
 
 def get_image_for_id(voc_path, year, image_id):
     """Get image data as uint8 array for given image.
@@ -125,13 +126,17 @@ def get_ids(voc_path, datasets):
 
 def add_to_dataset(voc_path, year, ids, images, boxes, start=0):
     """Process all given ids and adds them to given datasets."""
+    idx = 0
     for i, voc_id in enumerate(ids):
         image_data = get_image_for_id(voc_path, year, voc_id)
         image_boxes = get_boxes_for_id(voc_path, year, voc_id)
-        images[start + i] = image_data
-        boxes[start + i] = image_boxes
-    return i
-
+        # Ignore images without interested objects
+        if image_boxes.shape[0] == 0:
+            continue
+        images[start + idx] = image_data
+        boxes[start + idx] = image_boxes
+        idx += 1
+    return idx
 
 def _main(args):
     voc_path = os.path.expanduser(args.path_to_voc)
@@ -143,7 +148,7 @@ def _main(args):
 
     # Create HDF5 dataset structure
     print('Creating HDF5 dataset structure.')
-    fname = os.path.join(voc_path, 'pascal_voc_07_12.hdf5')
+    fname = os.path.join(voc_path, 'pascal_voc_07_12_person_vehicle.hdf5')
     voc_h5file = h5py.File(fname, 'w')
     uint8_dt = h5py.special_dtype(
         vlen=np.dtype('uint8'))  # variable length uint8
@@ -154,7 +159,7 @@ def _main(args):
     test_group = voc_h5file.create_group('test')
 
     # store class list for reference class ids as csv fixed-length numpy string
-    voc_h5file.attrs['classes'] = np.string_(str.join(',', classes))
+    voc_h5file.attrs['classes'] = np.string_(str.join(',', aerial_classes))
 
     # store images as variable length uint8 arrays
     train_images = train_group.create_dataset(
@@ -192,7 +197,6 @@ def _main(args):
     print('Closing HDF5 file.')
     voc_h5file.close()
     print('Done.')
-
 
 if __name__ == '__main__':
     _main(parser.parse_args())

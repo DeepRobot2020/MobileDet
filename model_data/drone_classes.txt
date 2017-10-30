@@ -1,7 +1,4 @@
-aeroplane
-bird
-boat
+person
 bus
 car
-person
 train
