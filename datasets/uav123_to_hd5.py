@@ -17,17 +17,22 @@ import re
 
 from sklearn.model_selection import train_test_split
 
-classes = ["person"]
-debug = False
+classes = ['person', 'car']
 
 parser = argparse.ArgumentParser(
-    description='Convert Okutama Action dataset to HDF5.')
+    description='Convert UAV123 dataset to HDF5.')
 
 parser.add_argument(
     '-p',
-    '--path_to_uav123',
-    help='path to Okutama Action videos directory',
-    default='~/data/UAV123/UAV123_10fps')
+    '--path_dataseq',
+    help='path to UAV123 dataseq',
+    default='~/data/UAV123/UAV123_10fps/data_seq/UAV123_10fps/')
+
+parser.add_argument(
+    '-p',
+    '--path_anno',
+    help='path to UAV123 annotation',
+    default='~/data/UAV123/UAV123_10fps/anno/UAV123_10fps/')
 
 seq_path = '~/data/UAV123/UAV123_10fps/data_seq/UAV123_10fps/'
 ann_path = '~/data/UAV123/UAV123_10fps/anno/UAV123_10fps/'
@@ -52,176 +57,98 @@ def find_car_person_folders(seq_path):
         elif car_match is not None:
             car_person_folders.append(car_match.group(0))
             print('Adding folder ' + car_match.group(0))
-    return car_person_folders
+    return sorted(car_person_folders)
 
 def find_car_person_anns(ann_path):
     """Find annoation files related to car and persons
     """
-    car_re = r'car\d(_\d)?.txt'
-    person_re = r'person\d(_\d)?.txt'
+    car_re = r'car\d+(_\d+)?.txt'
+    person_re = r'person\d+(_\d+)?.txt'
     car_person_ann = []
     for ann in os.listdir(ann_path):
         car_match = re.match(car_re, ann)
         person_match = re.match(person_re, ann)
         if car_match:
             car_person_ann.append(car_match.group(0))
+            print('Adding Car anno ' + car_match.group(0))
         elif person_match:
             car_person_ann.append(person_match.group(0))
-    return car_person_ann
+            print('Adding Person anno ' + person_match.group(0))
+    return sorted(car_person_ann)
+
+def parse_anno_to_bboxes(ann_path, ann_file):
+    """Parse a annotation file into bound boxs (batch_size, xc, yc, w, h) 
+    """
+    ann_file = os.path.join(ann_path, ann_file)
+    assert(os.path.exists(ann_file))
+    bboxes = []
+    with open(ann_file) as f:
+        lines = f.readlines()
+        lines = [line.rstrip() for line in lines]
+        for line in lines:
+            line = line.split(',')
+            try:
+                line = [int(a) for a in line]
+            except ValueError:
+                line = [0, 0, 0, 0]
+            line = np.array(line)
+            bboxes.append(line)
+    return np.array(bboxes)
+
+# imgs, anns = match_dataseq_anno(seq_path, ann_path)
 
 def match_dataseq_anno(seq_path, ann_path):
     car_person_folders = find_car_person_folders(seq_path)
-    car_person_anns = find_car_person_anns(seq_path)
-    parsed_ann = []
+    car_person_anns = find_car_person_anns(ann_path)
+    annotations = []
+    object_images = []
     for folder in car_person_folders:
-        total_images = os.listdir(os.path.join(seq_path, folder))
+        imgs = os.listdir(os.path.join(seq_path, folder))
+        imgs = sorted(imgs)
+        imgs = [os.path.join(seq_path, folder, img) for img in imgs]
         print('Folder name: ' + folder)
-        print('Total images: ' + str(total_images))
-
+        print('Total images: ' + str(len(imgs)))
         ann_name1 = folder + '.txt'
         ann_name2 = folder + '_'
         anns = [ann for ann in car_person_anns if ann_name1 in ann or ann_name2 in ann]
         anns = sorted(anns)
-        anns = ''.join([open(f).read() for f in anns])
-        anns = anns.split('\n')
-        for ann in anns:
+        anns = [os.path.join(ann_path, ann) for ann in anns]
+        ann_data = ''.join([open(f).read() for f in anns])
+        ann_data = ann_data.split('\n')
+        parsed_anns = []
+        for ann in ann_data:
             ann = ann.split(',')
             try:
                 ann = [int (a) for a in ann]
             except ValueError:
                 ann = [0, 0, 0, 0]
-        parsed_ann.append(anns)
-        print('Total annotations: ' + strlen((parsed_ann))
-    return car_person_folders, parsed_ann
+            parsed_anns.append(ann)
+        annotations.append(np.array(parsed_anns))
+        object_images.append(imgs)
+        print('Total annotations: ' + str(len(parsed_anns)))
+    return object_images, annotations
 
-def get_video_file(label_file, video_path):  
-    """ Get the video file associated with the label file
-    Parameters
-    ----------
-    video_path : str
-        Path to a video directory.
-    label_file : str
-        The label file containing boundling box information
-    Returns
-    -------
-    video_file : str
-        Video file name matching the label file
-    """
-    assert(os.path.exists(label_file))
-    assert(os.path.exists(video_path))
-    video_file = None
-    video_prefix = label_file.split('/')[-1].split('.txt')[0]
-    for file in os.listdir(video_path):
-        if fnmatch.fnmatch(file, video_prefix + '.*'):
-            video_file = file
-    video_file = os.path.join(video_path, video_file)
-    assert(os.path.exists(video_file))# this should never happens 
-    return video_file
-
-
-def get_video_frames(video_path):
-    """ Convert video file into a list of jpeg images
-    Parameters
-    ----------
-    video_path : str
-        Path to a video directory.
-    Returns
-    -------
-    orig_shape : tuple
-        Original shape of images (w,h)
-    images: list of numpy array
-        Encoded jpeg images of all the frames of the video file 
-    """
-    assert(os.path.exists(video_path))
-    frames = []
-    count = 0
-    vidcap = cv2.VideoCapture(video_path)
-    orig_shape = None
-    while True:
-        success, image = vidcap.read()
-        if not success:
-            break
-        if not orig_shape:
-            orig_shape = image.shape[:2][::-1]
-        # encode into jpeg and save frame into a list
-        ret, image = cv2.imencode('.jpg', image)
-        frames.append(image.flatten('C'))
-        count += 1
-    print("{} images are extacted in {}.".format(count,video_path))
-    return orig_shape, frames
-
-def get_bounding_boxes(label_file, orig_size):
-    """ Convert the original huam action tracking labels into Object detection labels (bboxes + object type)
-    Parameters
-    ----------
-    label_file : str
-        Path to a the label file containing all the original labels.
-    orig_size: tuple
-        The orignal size of video frames 
-    Returns
-    -------
-    bboxes_dict : dict
-        A dictionary (frame_id:np.array representing bboxes of all human objects of a frame id
-        Note that the frame_id is not necessary starting from zero or continouous as there might no objects on a frame
-    """
-    assert(os.path.exists(label_file))
-    label_lines = None
-    bboxes_dict = {}
-    with open(label_file, "r") as labels:
-        lines = labels.readlines()
-        label_lines = [np.array(line.rstrip().split()[1:9], dtype=np.int) for line in lines]
-        label_lines = np.array(label_lines)
-        for line in label_lines:
-            img_id = int(line[4])
-            lost = bool(line[5])
-            occluded = bool(line[6])
-            generated = bool(line[7])
-            if lost or generated or occluded:
-                continue
-            if img_id not in bboxes_dict:
-                bboxes_dict[img_id] = set()           
-            bboxes_dict[img_id].add(tuple(line[:4]))
-        # Now convert the values to numpy array 
-        for key, boxes in bboxes_dict.iteritems():
-            boxes = np.array(list(boxes))
-            boxes_xy = 0.5 * (boxes[:, 2:4] + boxes[:, 0:2])
-            boxes_wh = 1.0*(boxes[:, 2:4] - boxes[:, 0:2])
-            boxes_xy = boxes_xy / orig_size
-            boxes_wh = boxes_wh / orig_size
-            boxes = np.concatenate((boxes_xy, boxes_wh), axis=1)
-            bboxes_dict[key] = boxes
-    return bboxes_dict
-
-def draw(image, bboxes):
-    decoded_image = copy.deepcopy(image)
-    if image.shape[0] > 3180:
-        decoded_image = cv2.imdecode(image, 1)
-    if bboxes is None:
-        return decoded_image
-    h, w = decoded_image.shape[:2]
-    xmin = w*(bboxes[:,0] - 0.5 * bboxes[:,2]).reshape(-1, 1)
-    ymin = h*(bboxes[:,1] - 0.5 * bboxes[:,3]).reshape(-1, 1) 
-    xmax = w*(bboxes[:,0] + 0.5 * bboxes[:,2]).reshape(-1, 1)
-    ymax = h*(bboxes[:,1] + 0.5 * bboxes[:,3]).reshape(-1, 1)
-    corners = np.concatenate((xmin, ymin, xmax, ymax), axis=1)
+def draw(images, bboxes, name_hint='debug'):
+    xmin, ymin = bboxes[:,0],bboxes[:,1]
+    xmax, ymax = xmin + bboxes[:,2], ymin + bboxes[:,3] 
+    corners = np.concatenate((xmin.reshape(-1,1), ymin.reshape(-1,1), xmax.reshape(-1,1), ymax.reshape(-1,1)), axis=1)
     corners = np.array(corners, dtype=np.int)
-    for corner in corners:
-        cv2.rectangle(decoded_image, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
-    return decoded_image
+    for i in range(min(len(images), len(bboxes))):
+        img = cv2.imread(images[i])
+        corner = corners[i]
+        cv2.rectangle(img, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
+        out_dir = os.path.join('/tmp', name_hint)
+        if not os.path.exists(out_dir):
+            os.mkdir(out_dir)
+        out_img_path = os.path.join(out_dir, str(i)+'.jpg')
+        cv2.imwrite(out_img_path, img)
+    return
 
+for idx in range(41):
+    if idx == 7:
+        continue
+    draw(imgs[idx], anns[idx], str(idx))
 
-
-def add_to_dataset(dataset_images, dataset_boxes, images, boxes, start=0):    
-    """Add all images and bboxes to given datasets."""
-    current_rows = len(boxes)
-    total_rows = current_rows + dataset_images.shape[0]
-    dataset_images.resize(total_rows, axis=0)
-    dataset_boxes.resize(total_rows, axis=0)
-    for i in range(current_rows):
-        flatten_boxes = boxes[i].flatten('C')
-        dataset_boxes[start + i] = flatten_boxes
-        dataset_images[start + i] = images[i].flatten('C')
-    return i
 
 def _main(args):
     videos_path = os.path.expanduser(args.path_to_video)

@@ -34,7 +34,7 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help='path to HDF5 file containing pascal voc dataset',
-    default='~/data/PascalVOC/VOCdevkit/pascal_voc_07_12.hdf5')
+    default='~/data/PascalVoc/VOCdevkit/pascal_voc_07_12_person_vehicle.hdf5')
 
 argparser.add_argument(
     '-a',
@@ -72,11 +72,11 @@ def _main(args):
     orig_size = np.array([image.width, image.height])
     orig_size = np.expand_dims(orig_size, axis=0)
 
-    net_width  = 416
-    net_height = 416
+    net_width  = 608
+    net_height = 608
     
-    feats_width = net_width / 32
-    feats_height = net_height / 32
+    feats_width = net_width // 32
+    feats_height = net_height // 32
 
     # Image preprocessing.
     image = image.resize((net_width, net_height), PIL.Image.BICUBIC)
@@ -155,12 +155,7 @@ def _main(args):
     detectors_mask = np.expand_dims(detectors_mask, axis=0)
     matching_true_boxes = np.expand_dims(matching_true_boxes, axis=0)
 
-    num_steps = 100
-    # TODO: For full training, put preprocessing inside training loop.
-    # for i in range(num_steps):
-    #     loss = model.train_on_batch(
-    #         [image_data, boxes, detectors_mask, matching_true_boxes],
-    #         np.zeros(len(image_data)))
+    num_steps = 1
 
     model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
               np.zeros(len(image_data)),

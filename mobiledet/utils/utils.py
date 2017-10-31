@@ -49,7 +49,7 @@ def read_voc_datasets_train_batch(data_images, data_boxes, voc_class_names, targ
         batch_boxes = data_boxes[idx]
         batch_image = data_images[idx]
         batch_boxes = batch_boxes.reshape((-1, 5))    
-        batch_boxes = _remap_object_boxes(batch_boxes, voc_class_names, target_class_names)s
+        batch_boxes = _remap_object_boxes(batch_boxes, voc_class_names, target_class_names)
         if len(batch_boxes) == 0:
             continue
 

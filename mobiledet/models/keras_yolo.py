@@ -10,7 +10,7 @@ from keras.models import Model
 
 from ..utils import compose
 from .keras_darknet19 import (DarknetConv2D, DarknetConv2D_BN_Leaky,
-                              darknet_body18, darknet_body13)
+                              darknet_body18, darknet_shallow_body)
 from .keras_mobilenet import _depthwise_conv_block, relu6, mobile_net
 
 from keras.regularizers import l2

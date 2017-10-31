@@ -21,7 +21,7 @@ def preprocess_input(x):
     return x
 
 
-def mobile_net(input_size=(224, 224, 3), include_top=True, n_classes=1000, alpha=1.0, depth_multiplier=1):
+def mobile_net(input_size=(224, 224, 3), include_top=True, shallow_model=False, n_classes=1000, alpha=1.0, depth_multiplier=1):
     if input_size is None:
         img_input = Input(shape=(None, None, 3))
     else:
@@ -44,9 +44,10 @@ def mobile_net(input_size=(224, 224, 3), include_top=True, n_classes=1000, alpha
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=9)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=10)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=11)
-
-    x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, block_id=12, strides=(2, 2))
-    x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, block_id=13)
+    
+    if not shallow_model:
+        x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, block_id=12, strides=(2, 2))
+        x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, block_id=13)
 
     if include_top:
         x = GlobalAvgPool2D()(x)
