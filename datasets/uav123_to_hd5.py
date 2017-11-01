@@ -40,7 +40,7 @@ parser.add_argument(
     help='path to output UAV123 hdf5',
     default='~/data/UAV123/UAV123_10fps/')
 
-argparser.add_argument(
+parser.add_argument(
     '-d',
     '--verify_enabled',
     help='path to classes file, defaults to pascal_classes.txt',
@@ -288,7 +288,8 @@ def draw_on_images(dataset_images, dataset_boxes, out_dir='/tmp/uav123/'):
         os.rmdir(out_dir)
     os.mkdir(out_dir)
     for i in range(dataset_images.shape[0]):
-        img = draw_bboxes(dataset_images[i], dataset_boxes[i])
+        boxes = np.array(dataset_boxes[i]).reshape(-1, 5)
+        img = draw_bboxes(dataset_images[i], boxes)
         out_img_path = os.path.join(out_dir, str(i)+'.jpg')
         cv2.imwrite(out_img_path, img)
     return 
@@ -301,6 +302,7 @@ def _main(args):
     assert(os.path.exists(seq_path))
     assert(os.path.exists(anno_path))
     if verify_enabled:
+        hdf5_path = os.path.join(hdf5_path, 'UAV123.hdf5')
         print("Verifying the HD5 data....")
         if not os.path.exists(hdf5_path):
            print(hdf5_path + " does not exits!")
@@ -321,8 +323,8 @@ def _main(args):
     balance_images, balance_annos, unbalance_images, unbalance_annos = balance_video_annos(videos, annos)
     Xtrain, ytrain = shuffle(balance_images, balance_annos, random_state=0)
     _, Xvalid, _, yvalid = train_test_split(unbalance_images, unbalance_annos, test_size=0.15, random_state=42)
-    draw_on_images(Xtrain, ytrain, name_hint='train')
-    draw_on_images(Xvalid, yvalid, name_hint='valid')
+    # draw_on_images(Xtrain, ytrain, name_hint='train')
+    # draw_on_images(Xvalid, yvalid, name_hint='valid')
     # We will use balance_images, balance_annos as train data
     # and select a portion from unbalance_images, unbalance_annos to use as validation data 
     if not os.path.exists(hdf5_path):
@@ -330,7 +332,6 @@ def _main(args):
         os.mkdir(hdf5_path)
     # Create HDF5 dataset structure
     print('Creating HDF5 dataset structure.')
-    fname = os.path.join(hdf5_path, 'UAV123.hdf5')
     if os.path.exists(fname):
         print('Removing old HDF5')
         os.remove(fname)
