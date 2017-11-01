@@ -328,8 +328,7 @@ def add_to_dataset(dataset_images, dataset_boxes, images, boxes, start=0):
     dataset_images.resize(total_rows, axis=0)
     dataset_boxes.resize(total_rows, axis=0)
     for i in range(current_rows):
-        flatten_boxes = boxes[i].flatten('C')
-        dataset_boxes[start + i] = flatten_boxes
+        dataset_boxes[start + i] = boxes[i].flatten('C')
         dataset_images[start + i] = images[i].flatten('C')
     return i
 
@@ -396,8 +395,7 @@ def _main(args):
         print('Adding ' + str(len(Xtrain)) + ' training data')
         add_to_dataset(dataset_train_images, dataset_train_boxes, Xtrain, ytrain)
         print('Adding ' + str(len(Xvalid)) + ' validation data')
-        add_to_dataset(dataset_valid_images, dataset_valid_boxes, Xvalid, yvalid)
-        
+        add_to_dataset(dataset_valid_images, dataset_valid_boxes, Xvalid, yvalid)    
     print('Closing HDF5 file.')
     oa_h5file.close()
     print('Done.')

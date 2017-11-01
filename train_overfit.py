@@ -34,7 +34,7 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help='path to HDF5 file containing pascal voc dataset',
-    default='~/data/PascalVoc/VOCdevkit/pascal_voc_07_12_person_vehicle.hdf5')
+    default='~/data/PascalVOC/VOCdevkit/pascal_voc_07_12_person_vehicle.hdf5')
 
 argparser.add_argument(
     '-a',
@@ -74,10 +74,8 @@ def _main(args):
 
     net_width  = 608
     net_height = 608
-    
     feats_width = net_width // 32
     feats_height = net_height // 32
-
     # Image preprocessing.
     image = image.resize((net_width, net_height), PIL.Image.BICUBIC)
     image_data = np.array(image, dtype=np.float)
