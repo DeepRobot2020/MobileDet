@@ -24,12 +24,11 @@ We remap the orignal labels by only keeping object detection labels
 # For pedestrian detection task, the columns describing the actions should be ignored.
 
 # Object detection Labels:
-#     image_path. The frame that this annotation represents.
+#     labels. Always be 0 ('person') for this dataset 
 #     xmin. The top left x-coordinate of the bounding box.
 #     ymin. The top left y-coordinate of the bounding box.
 #     xmax. The bottom right x-coordinate of the bounding box.
 #     ymax. The bottom right y-coordinate of the bounding box.
-#     labels. Always be 'people' for this dataset 
 
 import numpy as np
 import os 
@@ -58,7 +57,7 @@ parser.add_argument(
     '-l',
     '--path_to_labels',
     help='path to Okutama Action label directory',
-    default='~/data/OkutamaAction/MultiActionLabels/3840x2160')
+    default='~/data/OkutamaAction/Labels')
 
 parser.add_argument(
     '-o',
@@ -66,6 +65,11 @@ parser.add_argument(
     help='path to output HDF5',
     default='~/data/OkutamaAction/hdf5')
 
+parser.add_argument(
+    '-d',
+    '--verify_enabled',
+    help='path to classes file, defaults to pascal_classes.txt',
+    default=False)
 
 def get_video_file(label_file, video_path):  
     """ Get the video file associated with the label file
@@ -203,23 +207,6 @@ def split_image_25(sbboxes, image, xmin, ymin, xmax, ymax,  w=3840, h=2160):
     ret, jpg_img = cv2.imencode('.jpg', image_cropped)
     return jpg_img, bboxes_prime
 
-def draw(image, bboxes):
-    decoded_image = copy.deepcopy(image)
-    if image.shape[0] > 3180:
-        decoded_image = cv2.imdecode(image, 1)
-    if bboxes is None:
-        return decoded_image
-    h, w = decoded_image.shape[:2]
-    xmin = w*(bboxes[:,0] - 0.5 * bboxes[:,2]).reshape(-1, 1)
-    ymin = h*(bboxes[:,1] - 0.5 * bboxes[:,3]).reshape(-1, 1) 
-    xmax = w*(bboxes[:,0] + 0.5 * bboxes[:,2]).reshape(-1, 1)
-    ymax = h*(bboxes[:,1] + 0.5 * bboxes[:,3]).reshape(-1, 1)
-    corners = np.concatenate((xmin, ymin, xmax, ymax), axis=1)
-    corners = np.array(corners, dtype=np.int)
-    for corner in corners:
-        cv2.rectangle(decoded_image, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
-    return decoded_image
-
 def split_2160p_to_1080p(image, bboxes):
     """ Split the original 3840x2160 into 5 pictures
     The first 4 images are from spliting the orignal images equally like below
@@ -332,16 +319,73 @@ def add_to_dataset(dataset_images, dataset_boxes, images, boxes, start=0):
         dataset_images[start + i] = images[i].flatten('C')
     return i
 
+def draw_bboxes(image, bboxes):
+    """Draw the bounding boxes on raw or jpg images"""
+    decoded_image = copy.deepcopy(image)
+    if image.shape[0] > 3180:
+        decoded_image = cv2.imdecode(image, 1)
+    if bboxes is None:
+        return decoded_image
+    corners = bboxes[:, 1:]
+    corners = np.array(corners, dtype=np.int)
+    for corner in corners:
+        cv2.rectangle(decoded_image, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
+    return decoded_image
+
+def draw_on_images(dataset_images, dataset_boxes, out_dir='/tmp/okutana/'):
+    if os.path.exists(out_dir):
+        os.rmdir(out_dir)
+    os.mkdir(out_dir)
+    for i in range(dataset_images.shape[0]):
+        img = draw_bboxes(dataset_images[i], dataset_boxes[i])
+        out_img_path = os.path.join(out_dir, str(i)+'.jpg')
+        cv2.imwrite(out_img_path, img)
+    return 
+
+def covert_bboxes_to_voc_style(list_bboxes, h=1080, w=1920):
+    """Conver bboxes to voc style bboxes (label, xmin, ymin, xmax, ymax)"""
+    voc_bboxes = []
+    for bboxes in list_bboxes:
+        xmin = w*(bboxes[:,0] - 0.5 * bboxes[:,2]).reshape(-1, 1)
+        ymin = h*(bboxes[:,1] - 0.5 * bboxes[:,3]).reshape(-1, 1) 
+        xmax = w*(bboxes[:,0] + 0.5 * bboxes[:,2]).reshape(-1, 1)
+        ymax = h*(bboxes[:,1] + 0.5 * bboxes[:,3]).reshape(-1, 1)
+        corners = np.concatenate((xmin, ymin, xmax, ymax), axis=1)
+        corners = np.array(corners, dtype=np.int)
+        # Generate label information 
+        label = np.zeros((bboxes.shape[0], 1), dtype=np.int)
+        label.fill(classes.index('person'))
+        voc_bboxes.append(np.concatenate((label, corners), axis=1))
+    return voc_bboxes
+
+
 def _main(args):
     videos_path = os.path.expanduser(args.path_to_video)
     labels_path = os.path.expanduser(args.path_to_labels)
     hdf5_path   = os.path.expanduser(args.path_to_hdf5)
+    verify_enabled = args.verify_enabled
+
+    if verify_enabled:
+        print("Verifying the HD5 data....")
+        if not os.path.exists(hdf5_path):
+           print(hdf5_path + " does not exits!")
+           return 
+        oa = h5py.File(hdf5_path, 'r')
+        print("Verifying the training data....")
+        draw_on_images(oa['train/images'], oa['train/boxes'])
+        print("Verifying the validation data....")
+        draw_on_images(oa['valid/images'], oa['valid/boxes'])
+        print("Verification is done")
+        return
+    fname = os.path.join(hdf5_path, 'OkutamaAction.hdf5')
+    if os.path.exists(fname):
+        os.remove(fname)
     if not os.path.exists(hdf5_path):
         print('Creating ' + hdf5_path)
         os.mkdir(hdf5_path)
     # Create HDF5 dataset structure
     print('Creating HDF5 dataset structure.')
-    fname = os.path.join(hdf5_path, 'OkutamaAction.hdf5')
+
     oa_h5file = h5py.File(fname, 'w')
     uint8_dt = h5py.special_dtype(
         vlen=np.dtype('uint8'))  # variable length uint8
@@ -382,20 +426,15 @@ def _main(args):
         print('Processing label file ' + lfile.split('/')[-1])
         bboxes_dict = get_bounding_boxes(lfile, orig_shape)
         Xtrain, ytrain = select_images_boxes(jpg_images, bboxes_dict)
-        if debug:
-            out_dir = video_file.split('/')[-1]
-            out_dir = os.path.join('/tmp', out_dir)
-            if not os.path.exists(out_dir):
-                os.mkdir(out_dir)
-            for i in range(len(Xtrain)):
-                img = draw(Xtrain[i], ytrain[i])
-                out_img_path = os.path.join(out_dir, str(i)+'.jpg')
-                cv2.imwrite(out_img_path, img)
         Xtrain, Xvalid, ytrain, yvalid = train_test_split(Xtrain, ytrain, test_size=0.33, random_state=42)   
+        # Convert the bboxes to be the same sytle as voc parse script
+        ytrain = covert_bboxes_to_voc_style(ytrain);
+        yvalid = covert_bboxes_to_voc_style(yvalid);
         print('Adding ' + str(len(Xtrain)) + ' training data')
         add_to_dataset(dataset_train_images, dataset_train_boxes, Xtrain, ytrain)
         print('Adding ' + str(len(Xvalid)) + ' validation data')
-        add_to_dataset(dataset_valid_images, dataset_valid_boxes, Xvalid, yvalid)    
+        add_to_dataset(dataset_valid_images, dataset_valid_boxes, Xvalid, yvalid)   
+        break 
     print('Closing HDF5 file.')
     oa_h5file.close()
     print('Done.')

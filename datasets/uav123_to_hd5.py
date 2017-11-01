@@ -40,26 +40,13 @@ parser.add_argument(
     help='path to output UAV123 hdf5',
     default='~/data/UAV123/UAV123_10fps/')
 
+argparser.add_argument(
+    '-d',
+    '--verify_enabled',
+    help='path to classes file, defaults to pascal_classes.txt',
+    default=False)
 
-def draw_on_images(images, bboxes, name_hint='debug'):
-    xmin, ymin = bboxes[:,0],bboxes[:,1]
-    xmax, ymax = xmin + bboxes[:,2], ymin + bboxes[:,3] 
-    corners = np.concatenate((xmin.reshape(-1,1), ymin.reshape(-1,1), xmax.reshape(-1,1), ymax.reshape(-1,1)), axis=1)
-    corners = np.array(corners, dtype=np.int)
-    for i in range(min(len(images), len(bboxes))):
-        img = cv2.imread(images[i])
-        corner = corners[i]
-        cv2.rectangle(img, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
-        out_dir = os.path.join('/tmp', name_hint)
-        if not os.path.exists(out_dir):
-            os.mkdir(out_dir)
-        out_img_path = os.path.join(out_dir, str(i)+'.jpg')
-        cv2.imwrite(out_img_path, img)
 
-def draw_on_list_images(list_videos, list_annos, list_folders):
-    for i in range(len(list_videos)):
-        draw_on_images(list_videos[i],list_annos[i], name_hint=list_folders[i])
-  
 def find_car_person_folders(seq_path):    
     """ Find folders with car or person pictures
     """
@@ -141,6 +128,9 @@ def match_dataseq_anno(seq_path, ann_path):
                 ann = [0, 0, 0, 0]
             parsed_anns.append(ann)
         parsed_anns = np.array(parsed_anns)
+        # covert the (xmin, ymin, w, h) to (xmin,ymin, xmax,ymax)
+        parsed_anns[:,2] = parsed_anns[:,0] + parsed_anns[:,2]
+        parsed_anns[:,3] = parsed_anns[:,1] + parsed_anns[:,3]
         label = np.zeros((parsed_anns.shape[0], 1), dtype=np.int)
         if 'car' in folder.lower():
             label.fill(classes.index('car'))
@@ -149,7 +139,8 @@ def match_dataseq_anno(seq_path, ann_path):
         else:
             print('warning: unknown label')
             continue
-        parsed_anns = np.concatenate((parsed_anns, label), axis=1)
+        # final label is (class, xmin,ymin, xmax,ymax), the same as voc parse script
+        parsed_anns = np.concatenate((label, parsed_anns), axis=1)
         print('Total annotations: ' + str(len(parsed_anns)))
         if len(parsed_anns) != len(imgs):
             print('warning: image and anno have different size. Turncating') 
@@ -265,12 +256,64 @@ def add_to_dataset(dataset_images, dataset_boxes, images, bboxes, start=0):
         dataset_boxes[start + i] = bboxes[i].flatten('C')
     return i
 
+def draw_on_image_files(images, bboxes, name_hint='debug'):
+    xmin, ymin = bboxes[:,0],bboxes[:,1]
+    xmax, ymax = xmin + bboxes[:,2], ymin + bboxes[:,3] 
+    corners = np.concatenate((xmin.reshape(-1,1), ymin.reshape(-1,1), xmax.reshape(-1,1), ymax.reshape(-1,1)), axis=1)
+    corners = np.array(corners, dtype=np.int)
+    for i in range(min(len(images), len(bboxes))):
+        img = cv2.imread(images[i])
+        corner = corners[i]
+        cv2.rectangle(img, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
+        out_dir = os.path.join('/tmp', name_hint)
+        if not os.path.exists(out_dir):
+            os.mkdir(out_dir)
+        out_img_path = os.path.join(out_dir, str(i)+'.jpg')
+        cv2.imwrite(out_img_path, img)
+
+def draw_bboxes(image, bboxes):
+    decoded_image = copy.deepcopy(image)
+    if image.shape[0] > 3180:
+        decoded_image = cv2.imdecode(image, 1)
+    if bboxes is None:
+        return decoded_image
+    corners = bboxes[:, 1:]
+    corners = np.array(corners, dtype=np.int)
+    for corner in corners:
+        cv2.rectangle(decoded_image, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
+    return decoded_image
+
+def draw_on_images(dataset_images, dataset_boxes, out_dir='/tmp/uav123/'):
+    if os.path.exists(out_dir):
+        os.rmdir(out_dir)
+    os.mkdir(out_dir)
+    for i in range(dataset_images.shape[0]):
+        img = draw_bboxes(dataset_images[i], dataset_boxes[i])
+        out_img_path = os.path.join(out_dir, str(i)+'.jpg')
+        cv2.imwrite(out_img_path, img)
+    return 
+
 def _main(args):
     seq_path = os.path.expanduser(args.seq_path)
     anno_path = os.path.expanduser(args.anno_path)
     hdf5_path   = os.path.expanduser(args.hdf5_path)
+    verify_enabled = args.verify_enabled
     assert(os.path.exists(seq_path))
     assert(os.path.exists(anno_path))
+    if verify_enabled:
+        print("Verifying the HD5 data....")
+        if not os.path.exists(hdf5_path):
+           print(hdf5_path + " does not exits!")
+           return 
+        uav123 = h5py.File(hdf5_path, 'r')
+        print("Verifying the training data....")
+        draw_on_images(uav123['train/images'], uav123['train/boxes'])
+        print("Verifying the validation data....")
+        draw_on_images(uav123['valid/images'], uav123['valid/boxes'])
+        print("Verification is done")
+        return
+
+
     list_videos, list_annos, list_folders = match_dataseq_anno(seq_path, anno_path)
     print(len(list_videos), len(list_annos))
     videos, annos, folders = select_object_detection_images(list_videos, list_annos, list_folders)
