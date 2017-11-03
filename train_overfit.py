@@ -17,9 +17,9 @@ from keras import backend as K
 from keras.layers import Input, Lambda
 from keras.models import Model
 
-from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobilenet,yolo_body_darknet19,
+from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobilenet,yolo_body_darknet_shallow_feature,
                                      yolo_eval, yolo_head, yolo_loss, yolo_body_darknet_feature)
-from mobiledet.models.keras_darknet19 import darknet19_feature_extractor
+from mobiledet.models.keras_darknet19 import darknet19_feature_extractor, darknet_shallow_feature_extractor
 from mobiledet.utils.draw_boxes import draw_boxes
 
 
@@ -48,12 +48,18 @@ argparser.add_argument(
     help='path to classes file, defaults to pascal_classes.txt',
     default='model_data/drone_classes.txt')
 
+argparser.add_argument(
+    '-s',
+    '--shallow_mode',
+    help='Whether to use shallow mode',
+    default=True)
+
 
 def _main(args):
     voc_path = os.path.expanduser(args.data_path)
     classes_path = os.path.expanduser(args.classes_path)
     anchors_path = os.path.expanduser(args.anchors_path)
-
+    shallow_mode = args.shallow_mode
     with open(classes_path) as f:
         class_names = f.readlines()
     class_names = [c.strip() for c in class_names]
@@ -74,8 +80,13 @@ def _main(args):
 
     net_width  = 608
     net_height = 608
-    feats_width = net_width // 32
-    feats_height = net_height // 32
+    if shallow_mode:
+        feats_width = net_width // 16
+        feats_height = net_height // 16
+    else: 
+        feats_width = net_width // 32
+        feats_height = net_height // 32
+
     # Image preprocessing.
     image = image.resize((net_width, net_height), PIL.Image.BICUBIC)
     image_data = np.array(image, dtype=np.float)
@@ -104,7 +115,8 @@ def _main(args):
     detectors_mask_shape = (feats_height, feats_width, 5, 1)
     matching_boxes_shape = (feats_height, feats_width, 5, 5)
     detectors_mask, matching_true_boxes = preprocess_true_boxes(boxes, anchors,
-                                                                [net_height, net_width])
+                                                                [net_height, net_width], 
+                                                                [feats_height, feats_width])
 
     # Create model input layers.
     image_input = Input(shape=(net_height , net_width, 3))
@@ -122,10 +134,10 @@ def _main(args):
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
     # Create model body.
-    feats_model = darknet19_feature_extractor(image_input);
-    model_body = yolo_body_darknet_feature(feats_model, len(anchors), len(class_names), extra_detection_feature=False)
+    feats_model = darknet_shallow_feature_extractor(image_input);
+    model_body = yolo_body_darknet_shallow_feature(feats_model, len(anchors), len(class_names), extra_feature=True)
 
-    # model_body.summary()
+    model_body.summary()
 
     # TODO: Replace Lambda with custom Keras layer for loss.
     model_loss = Lambda(
@@ -153,7 +165,7 @@ def _main(args):
     detectors_mask = np.expand_dims(detectors_mask, axis=0)
     matching_true_boxes = np.expand_dims(matching_true_boxes, axis=0)
 
-    num_steps = 1
+    num_steps = 1000
 
     model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
               np.zeros(len(image_data)),

@@ -22,7 +22,7 @@ from keras.applications.vgg19 import VGG19
 
 sys.path.append('..')
 
-def yolo_get_detector_mask(boxes, anchors, model_shape=[416, 416]):
+def yolo_get_detector_mask(boxes, anchors, model_shape=[416, 416], feature_shape=[32, 32]):
     '''
     Precompute detectors_mask and matching_true_boxes for training.
     Detectors mask is 1 for each spatial position in the final conv layer and
@@ -33,7 +33,7 @@ def yolo_get_detector_mask(boxes, anchors, model_shape=[416, 416]):
     detectors_mask = [0 for i in range(len(boxes))]
     matching_true_boxes = [0 for i in range(len(boxes))]
     for i, box in enumerate(boxes):
-        detectors_mask[i], matching_true_boxes[i] = preprocess_true_boxes(box, anchors, model_shape)
+        detectors_mask[i], matching_true_boxes[i] = preprocess_true_boxes(box, anchors, model_shape, feature_shape)
     return np.array(detectors_mask), np.array(matching_true_boxes)
 
 def space_to_depth_x2(x):
@@ -69,7 +69,7 @@ def space_to_depth_x4_output_shape(input_shape):
             input_shape[3]) if input_shape[1] else (input_shape[0], None, None,
                                                     16 * input_shape[3])
 
-def yolo_body_darknet_feature(darknet, num_anchors, num_classes, extra_detection_feature=False):
+def yolo_body_darknet_feature(darknet, num_anchors, num_classes, extra_feature=False):
     """Create YOLO_V2 model CNN body in Keras."""
     feature_for_detection_layer0 = 'leaky_re_lu_8'
     feature_for_detection_layer1 = 'leaky_re_lu_13'
@@ -85,7 +85,7 @@ def yolo_body_darknet_feature(darknet, num_anchors, num_classes, extra_detection
         output_shape=space_to_depth_x2_output_shape,
         name='space_to_depth_x2')(conv13)
 
-    if extra_detection_feature:
+    if extra_feature:
         conv8 = darknet.get_layer(feature_for_detection_layer0).output
         conv8 = DarknetConv2D_BN_Leaky(16, (1, 1))(conv8)
         # TODO: Allow Keras Lambda to use func arguments for output_shape?
@@ -102,41 +102,39 @@ def yolo_body_darknet_feature(darknet, num_anchors, num_classes, extra_detection
     x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
     return Model(inputs, x)
 
-def yolo_body_darknet19(inputs, num_anchors, num_classes, extra_detection_feature=False):
+def yolo_body_darknet_shallow_feature(darknet, num_anchors, num_classes, extra_feature=False):
     """Create YOLO_V2 model CNN body in Keras."""
-    feature_for_detection_layer0 = 'leaky_re_lu_8'
-    feature_for_detection_layer1 = 'leaky_re_lu_13'
+    feature_for_detection_layer0 = 'leaky_re_lu_5'
+    feature_for_detection_layer1 = 'leaky_re_lu_8'
 
-    darknet = Model(inputs, darknet_body18()(inputs))
+    inputs = darknet.inputs
+    conv15 = darknet.output
 
-    conv20 = compose(
-        DarknetConv2D_BN_Leaky(1024, (3, 3)),
-        DarknetConv2D_BN_Leaky(1024, (3, 3)))(darknet.output)
-
-    conv13 = darknet.get_layer(feature_for_detection_layer1).output
-    conv13 = DarknetConv2D_BN_Leaky(64, (1, 1))(conv13)
+    conv8 = darknet.get_layer(feature_for_detection_layer1).output
+    conv8 = DarknetConv2D_BN_Leaky(64, (1, 1))(conv8)
     # TODO: Allow Keras Lambda to use func arguments for output_shape?
-    conv13_reshaped = Lambda(
+    conv8_reshaped = Lambda(
         space_to_depth_x2,
         output_shape=space_to_depth_x2_output_shape,
-        name='space_to_depth_x2')(conv13)
+        name='space_to_depth_x2')(conv8)
 
-    if extra_detection_feature:
-        conv8 = darknet.get_layer(feature_for_detection_layer0).output
-        conv8 = DarknetConv2D_BN_Leaky(16, (1, 1))(conv8)
+    if extra_feature:
+        conv5 = darknet.get_layer(feature_for_detection_layer0).output
+        conv5 = DarknetConv2D_BN_Leaky(16, (1, 1))(conv5)
         # TODO: Allow Keras Lambda to use func arguments for output_shape?
-        conv8_reshaped = Lambda(
+        conv5_reshaped = Lambda(
             space_to_depth_x4,
             output_shape=space_to_depth_x4_output_shape,
-            name='space_to_depth_x4')(conv8)   
+            name='space_to_depth_x4')(conv5)   
 
-        x = concatenate([conv8_reshaped, conv13_reshaped, conv20])
+        x = concatenate([conv5_reshaped, conv8_reshaped, conv15])
     else:
-        x = concatenate([conv13_reshaped, conv20])
+        x = concatenate([conv8_reshaped, conv15])
 
-    x = DarknetConv2D_BN_Leaky(1024, (3, 3))(x)
+    x = DarknetConv2D_BN_Leaky(512, (3, 3))(x)
     x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
     return Model(inputs, x)
+
 
 def yolo_body_mobilenet(inputs, num_anchors, num_classes, extra_detection_feature=False):
     """
@@ -474,7 +472,7 @@ def yolo_eval(yolo_outputs,
     return boxes, scores, classes
 
 
-def preprocess_true_boxes(true_boxes, anchors, image_size):
+def preprocess_true_boxes(true_boxes, anchors, image_size, feature_size):
     """Find detector in YOLO where ground truth box should appear.
 
     Parameters
@@ -489,7 +487,8 @@ def preprocess_true_boxes(true_boxes, anchors, image_size):
         is the spatial dimension of the final convolutional features.
     image_size : array-like
         List of image dimensions in form of h, w in pixels.
-
+    feature_size : array-like
+        List of feature dimensions in form of h, w in pixels.
     Returns
     -------
     detectors_mask : array
@@ -500,13 +499,14 @@ def preprocess_true_boxes(true_boxes, anchors, image_size):
         adjusted for comparison with predicted parameters at training time.
     """
     height, width = image_size
+    feature_height, feature_width = feature_size
     num_anchors = len(anchors)
     # Downsampling factor of 5x 2-stride max_pools == 32.
     # TODO: Remove hardcoding of downscaling calculations.
     assert height % 32 == 0, 'Image sizes in YOLO_v2 must be multiples of 32.'
     assert width % 32 == 0, 'Image sizes in YOLO_v2 must be multiples of 32.'
-    conv_height = height // 32
-    conv_width = width // 32
+    conv_height = height // feature_height
+    conv_width = width // feature_width
     num_box_params = true_boxes.shape[1]
     detectors_mask = np.zeros(
         (conv_height, conv_width, num_anchors, 1), dtype=np.float32)
