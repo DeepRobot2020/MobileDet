@@ -50,7 +50,7 @@ parser.add_argument('-n', '--number_anchors',
                     help="Number of anchors [default = 5]", type=int, default=5)
 
 
-SHRINK_FACTOR = 32
+SHRINK_FACTOR = 16
 IMG_INPUT_SIZE = 608
 
 def hdf5_read_image_boxes(data_images, data_boxes, idx):  

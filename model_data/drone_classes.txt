@@ -1,4 +1,0 @@
-person
-car
-bus
-train

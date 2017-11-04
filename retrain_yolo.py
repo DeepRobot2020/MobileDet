@@ -16,13 +16,14 @@ from keras.layers import Input, Lambda, Conv2D
 from keras.models import load_model, Model
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
 
-from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_darknet_feature,
+from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_darknet_feature, yolo_body_darknet_shallow_feature,
                                      yolo_body_mobilenet, yolo_eval, yolo_head, yolo_loss)
 from mobiledet.utils.draw_boxes import draw_boxes
 
 from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, augment_image
 from mobiledet.models.keras_yolo import yolo_get_detector_mask
-from mobiledet.models.keras_darknet19 import darknet19_feature_extractor
+from mobiledet.models.keras_darknet19 import darknet19_feature_extractor, darknet_shallow_feature_extractor
+from cfg import *
 
 # Args
 argparser = argparse.ArgumentParser(
@@ -38,48 +39,39 @@ argparser.add_argument(
     '-a',
     '--anchors_path',
     help='path to anchors file, defaults to yolo_anchors.txt',
-    default=os.path.join('model_data', 'yolo_anchors.txt'))
+    default=os.path.join('model_data', 'aeryon_anchors.txt'))
 
 argparser.add_argument(
     '-c',
     '--classes_path',
-    help='path to classes file, defaults to pascal_classes.txt',
-    default='model_data/pascal_classes.txt')
+    help='path to classes file, defaults to aeryon_classes.txt',
+    default='model_data/aeryon_classes.txt')
 
-# Default anchor boxes
-YOLO_ANCHORS = np.array(
-    ((0.57273, 0.677385), (1.87446, 2.06253), (3.33843, 5.47434),
-     (7.88282, 3.52778), (9.77052, 9.16828)))
-
-BATCH_SIZE = 4
-IMAGE_H    = 608
-IMAGE_W    = 608
-
-FEAT_W = IMAGE_W / 32
-FEAT_H = IMAGE_H / 32
 
 def _main(args):
     data_path    = os.path.expanduser(args.data_path)
     classes_path = os.path.expanduser(args.classes_path)
     anchors_path = os.path.expanduser(args.anchors_path)
     class_names  = get_classes(classes_path)
-    
+    print(anchors_path)
     anchors = get_anchors(anchors_path)
+    print('Anchors:')
+    print(anchors)
     
     # custom data saved as a numpy file.
     h5_data = h5py.File(data_path, 'r')
   
-    TRAIN_BOXES = np.array(h5_data['train/boxes'])
-    TRAIN_IMAGES = np.array(h5_data['train/images'])
+    train_boxes = np.array(h5_data['train/boxes'])
+    train_images = np.array(h5_data['train/images'])
 
-    VALID_BOXES = np.array(h5_data['valid/boxes'])
-    VALID_IMAGES = np.array(h5_data['valid/images'])
+    valid_boxes = np.array(h5_data['valid/boxes'])
+    valid_images = np.array(h5_data['valid/images'])
     # clear any previous sesson
     K.clear_session()
 
-    model_body, model = create_model(anchors, class_names, load_pretrained=True)
-    train_batch_gen = DataBatchGenerator(TRAIN_IMAGES, TRAIN_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=False)
-    valid_batch_gen = DataBatchGenerator(VALID_IMAGES, VALID_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names)
+    model_body, model = create_model(anchors, class_names)
+    train_batch_gen = DataBatchGenerator(train_images, train_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=False)
+    valid_batch_gen = DataBatchGenerator(valid_images, valid_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names)
     train(
         model,
         class_names,
@@ -98,9 +90,11 @@ def get_anchors(anchors_path):
     '''loads the anchors from a file'''
     if os.path.isfile(anchors_path):
         with open(anchors_path) as f:
-            anchors = f.readline()
+            anchors = f.readlines()
             try:
-                anchors = [float(x) for x in anchors.split(',')]
+                anchors = [anchor.rstrip().split(',') for anchor in anchors]
+                anchors =  sum(anchors, [])
+                anchors = [float(x) for x in anchors]
             except:
                 anchors = YOLO_ANCHORS
             return np.array(anchors).reshape(-1, 2)
@@ -109,7 +103,7 @@ def get_anchors(anchors_path):
         return YOLO_ANCHORS
 
 
-def create_model(anchors, class_names, load_pretrained=False, freeze_body=False):
+def create_model(anchors, class_names, load_pretrained=True, freeze_body=False):
     '''
     returns the body of the model and the model
 
@@ -126,9 +120,9 @@ def create_model(anchors, class_names, load_pretrained=False, freeze_body=False)
     model: YOLOv2 with custom loss Lambda layer
 
     '''
-
-    detectors_mask_shape = (FEAT_H, FEAT_W, 5, 1)
-    matching_boxes_shape = (FEAT_H, FEAT_W, 5, 5)
+    num_anchors = len(anchors)
+    detectors_mask_shape = (FEAT_H, FEAT_W, num_anchors, 1)
+    matching_boxes_shape = (FEAT_H, FEAT_W, num_anchors, 5)
 
     # Create model input layers.
     image_input = Input(shape=(IMAGE_H, IMAGE_W, 3))
@@ -138,10 +132,8 @@ def create_model(anchors, class_names, load_pretrained=False, freeze_body=False)
     matching_boxes_input = Input(shape=matching_boxes_shape)
 
     # Create model body.
-    extra_detect_feats = True
-    
     feature_model = darknet19_feature_extractor(image_input);
-    yolo_model = yolo_body_darknet_feature(feature_model, len(anchors), len(class_names), extra_feature=extra_detect_feats)
+    yolo_model = yolo_body_darknet_feature(feature_model, len(anchors), len(class_names), extra_feature=True)
     topless_yolo = Model(yolo_model.input, yolo_model.layers[-2].output)
 
     if load_pretrained:
@@ -240,7 +232,7 @@ class DataBatchGenerator:
                         
             batch_images = np.array(batch_images)
             batch_boxes = np.array(batch_boxes)
-            detectors_mask, matching_true_boxes = yolo_get_detector_mask(batch_boxes, self.anchors, model_shape=[self.model_h, self.model_w])
+            detectors_mask, matching_true_boxes = yolo_get_detector_mask(batch_boxes, self.anchors, [self.model_h, self.model_w], [self.feat_h, self.feat_w])
             X_train = [batch_images, batch_boxes, detectors_mask, matching_true_boxes]
             y_train = np.zeros(len(batch_images))
             yield X_train, y_train
@@ -282,8 +274,9 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
                         verbose=1)
     model.save_weights('trained_stage_1.h5')
 
+    adam = Adam(lr=0.0005, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
-        optimizer='adam', loss={
+        optimizer=adam, loss={
             'yolo_loss': lambda y_true, y_pred: y_pred
         })  # This is a hack to use the custom loss function in the last layer.
 
@@ -299,6 +292,11 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
 
     model.save_weights('trained_stage_2.h5')
 
+    adam = Adam(lr=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
+    model.compile(
+        optimizer=adam, loss={
+            'yolo_loss': lambda y_true, y_pred: y_pred
+        })  
     checkpoint = ModelCheckpoint("trained_stage_3_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),

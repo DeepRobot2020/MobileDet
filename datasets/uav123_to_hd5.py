@@ -313,8 +313,6 @@ def _main(args):
         draw_on_images(uav123['valid/images'], uav123['valid/boxes'])
         print("Verification is done")
         return
-
-
     list_videos, list_annos, list_folders = match_dataseq_anno(seq_path, anno_path)
     print(len(list_videos), len(list_annos))
     videos, annos, folders = select_object_detection_images(list_videos, list_annos, list_folders)
@@ -331,6 +329,8 @@ def _main(args):
         os.mkdir(hdf5_path)
     # Create HDF5 dataset structure
     print('Creating HDF5 dataset structure.')
+    fname = os.path.join(hdf5_path, 'UAV123.hdf5')
+
     if os.path.exists(fname):
         print('Removing old HDF5')
         os.remove(fname)

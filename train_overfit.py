@@ -22,6 +22,7 @@ from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobile
 from mobiledet.models.keras_darknet19 import darknet19_feature_extractor, darknet_shallow_feature_extractor
 from mobiledet.utils.draw_boxes import draw_boxes
 
+from cfg import *
 
 YOLO_ANCHORS = np.array(
     ((0.57273, 0.677385), (1.87446, 2.06253), (3.33843, 5.47434),
@@ -40,26 +41,35 @@ argparser.add_argument(
     '-a',
     '--anchors_path',
     help='path to anchors file, defaults to yolo_anchors.txt',
-    default='model_data/yolo_anchors.txt')
+    default='model_data/aeryon_anchors.txt')
 
 argparser.add_argument(
     '-c',
     '--classes_path',
     help='path to classes file, defaults to pascal_classes.txt',
-    default='model_data/drone_classes.txt')
+    default='model_data/aeryon_classes.txt')
 
-argparser.add_argument(
-    '-s',
-    '--shallow_mode',
-    help='Whether to use shallow mode',
-    default=True)
-
+def get_anchors(anchors_path):
+    '''loads the anchors from a file'''
+    if os.path.isfile(anchors_path):
+        with open(anchors_path) as f:
+            anchors = f.readlines()
+            try:
+                anchors = [anchor.rstrip().split(',') for anchor in anchors]
+                anchors =  sum(anchors, [])
+                anchors = [float(x) for x in anchors]
+            except:
+                anchors = YOLO_ANCHORS
+            return np.array(anchors).reshape(-1, 2)
+    else:
+        Warning("Could not open anchors file, using default.")
+        return YOLO_ANCHORS
 
 def _main(args):
     voc_path = os.path.expanduser(args.data_path)
     classes_path = os.path.expanduser(args.classes_path)
     anchors_path = os.path.expanduser(args.anchors_path)
-    shallow_mode = args.shallow_mode
+
     with open(classes_path) as f:
         class_names = f.readlines()
     class_names = [c.strip() for c in class_names]
@@ -72,20 +82,21 @@ def _main(args):
     else:
         anchors = YOLO_ANCHORS
 
+    anchors = get_anchors(anchors_path)
+    print('Prior anchor boxes:')    
+    print(anchors)
+    num_anchors = len(anchors)
     voc = h5py.File(voc_path, 'r')
     
-    image = PIL.Image.open(io.BytesIO(voc['train/images'][28]))
+    test_id = 31
+    image = PIL.Image.open(io.BytesIO(voc['train/images'][test_id]))
     orig_size = np.array([image.width, image.height])
     orig_size = np.expand_dims(orig_size, axis=0)
 
-    net_width  = 608
-    net_height = 608
-    if shallow_mode:
-        feats_width = net_width // 16
-        feats_height = net_height // 16
-    else: 
-        feats_width = net_width // 32
-        feats_height = net_height // 32
+    net_width    = IMAGE_W
+    net_height   = IMAGE_H
+    feats_width  = FEAT_W
+    feats_height = FEAT_H
 
     # Image preprocessing.
     image = image.resize((net_width, net_height), PIL.Image.BICUBIC)
@@ -94,7 +105,7 @@ def _main(args):
 
     # Box preprocessing.
     # Original boxes stored as 1D list of class, x_min, y_min, x_max, y_max.
-    boxes = voc['train/boxes'][28]
+    boxes = voc['train/boxes'][test_id]
     boxes = boxes.reshape((-1, 5))
     # Get extents as y_min, x_min, y_max, x_max, class for comparision with
     # model output.
@@ -112,8 +123,8 @@ def _main(args):
     # anchor that should be active for the given boxes and 0 otherwise.
     # Matching true boxes gives the regression targets for the ground truth box
     # that caused a detector to be active or 0 otherwise.
-    detectors_mask_shape = (feats_height, feats_width, 5, 1)
-    matching_boxes_shape = (feats_height, feats_width, 5, 5)
+    detectors_mask_shape = (feats_height, feats_width, num_anchors, 1)
+    matching_boxes_shape = (feats_height, feats_width, num_anchors, 5)
     detectors_mask, matching_true_boxes = preprocess_true_boxes(boxes, anchors,
                                                                 [net_height, net_width], 
                                                                 [feats_height, feats_width])
@@ -121,6 +132,7 @@ def _main(args):
     # Create model input layers.
     image_input = Input(shape=(net_height , net_width, 3))
     boxes_input = Input(shape=(None, 5))
+
     detectors_mask_input = Input(shape=detectors_mask_shape)
     matching_boxes_input = Input(shape=matching_boxes_shape)
 
@@ -134,8 +146,8 @@ def _main(args):
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
     # Create model body.
-    feats_model = darknet_shallow_feature_extractor(image_input);
-    model_body = yolo_body_darknet_shallow_feature(feats_model, len(anchors), len(class_names), extra_feature=True)
+    feats_model = darknet19_feature_extractor(image_input);
+    model_body = yolo_body_darknet_feature(feats_model, len(anchors), len(class_names), extra_feature=True)
 
     model_body.summary()
 

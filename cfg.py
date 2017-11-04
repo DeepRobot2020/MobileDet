@@ -2,22 +2,28 @@
 Main configuration file for YOLOv2 Project.
 Modify every time one would like to train on a new dataset
 '''
-# Image input resolution. Higher resolution might improve accuracy but reduce the interference
-IMG_INPUT_SIZE = 608
-N_CLASSES = 2
-N_ANCHORS = 5
+import numpy as np
 
-# Type of Feature Extractor.   Currently supported:
-#   'yolov2':     Original YOLOv2 feature extractor
-#   'mobilenet' : MobileNet implementation from Google
-#   'densenet'  : Densely Connected convolutional network (Facebook)
-FEATURE_EXTRACTOR     = 'yolov2'
 
-# Map indices to actual label names - absolute path required
-CATEGORIES = "/home/dat/Documents/yolov2/dataset/pascal/categories.txt"
-ANCHORS    = "/home/dat/Documents/yolov2/dataset/pascal/anchors.txt"
+
 
 # If a feature extractor performed 5 max-pooling --> Image resolution being reduced 2^5 = 32 times
 # Most current state-of-the-art models have max-pooling layers (August, 2017)
-SHRINK_FACTOR  = 16
+FEATURE_EXTRACTOR = 'darknet19'
+N_CLASSES         = 2
+N_ANCHORS         = 9
+SHRINK_FACTOR     = 32
+BATCH_SIZE        = 4
+IMAGE_H           = 608
+IMAGE_W           = 608
+
+# Default anchor boxes
+YOLO_ANCHORS = np.array(
+    ((0.57273, 0.677385), (1.87446, 2.06253), (3.33843, 5.47434),
+     (7.88282, 3.52778), (9.77052, 9.16828)))
+
+FEAT_H = IMAGE_H // SHRINK_FACTOR
+FEAT_W = IMAGE_W // SHRINK_FACTOR
+
+
 

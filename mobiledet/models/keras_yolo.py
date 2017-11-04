@@ -22,7 +22,7 @@ from keras.applications.vgg19 import VGG19
 
 sys.path.append('..')
 
-def yolo_get_detector_mask(boxes, anchors, model_shape=[416, 416], feature_shape=[32, 32]):
+def yolo_get_detector_mask(boxes, anchors, model_shape=[416, 416], feature_shape=[19, 19]):
     '''
     Precompute detectors_mask and matching_true_boxes for training.
     Detectors mask is 1 for each spatial position in the final conv layer and
@@ -505,8 +505,9 @@ def preprocess_true_boxes(true_boxes, anchors, image_size, feature_size):
     # TODO: Remove hardcoding of downscaling calculations.
     assert height % 32 == 0, 'Image sizes in YOLO_v2 must be multiples of 32.'
     assert width % 32 == 0, 'Image sizes in YOLO_v2 must be multiples of 32.'
-    conv_height = height // feature_height
-    conv_width = width // feature_width
+    conv_height = int(feature_height)
+    conv_width = int(feature_width)
+
     num_box_params = true_boxes.shape[1]
     detectors_mask = np.zeros(
         (conv_height, conv_width, num_anchors, 1), dtype=np.float32)
