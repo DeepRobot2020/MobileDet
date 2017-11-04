@@ -42,31 +42,22 @@ def _remap_object_boxes(boxes, class_names, target_class_names):
             drone_box.append(dbox)
     return np.array(drone_box)
 
-def read_voc_datasets_train_batch(data_images, data_boxes, voc_class_names, target_class_names):  
-    found_valid = False
-    while not found_valid:
-        idx = np.random.choice(data_images.shape[0], replace=False)
-        batch_boxes = data_boxes[idx]
-        batch_image = data_images[idx]
-        batch_boxes = batch_boxes.reshape((-1, 5))    
-        batch_boxes = _remap_object_boxes(batch_boxes, voc_class_names, target_class_names)
-        if len(batch_boxes) == 0:
-            continue
-
-        found_valid = True
-        image = PIL.Image.open(io.BytesIO(batch_image))
-        
-        orig_size = np.array([image.width, image.height])
-        orig_size = np.expand_dims(orig_size, axis=0)
-        image_data = np.array(image, dtype=np.float)           
-        return np.array(image_data), np.array(batch_boxes)
+def read_voc_datasets_train_batch(data_images, data_boxes):  
+    idx = np.random.choice(data_images.shape[0], replace=False)
+    batch_image = data_images[idx]
+    batch_boxes = data_boxes[idx]
+    batch_boxes = batch_boxes.reshape((-1, 5))    
+    image = PIL.Image.open(io.BytesIO(batch_image))
+    orig_size = np.array([image.width, image.height])
+    orig_size = np.expand_dims(orig_size, axis=0)
+    image_data = np.array(image, dtype=np.float)           
+    return np.array(image_data), np.array(batch_boxes)
 
 def augment_image(image_data, bboxes, model_width, model_height, jitter=False):
     h, w, c = image_data.shape
     if jitter:        
         scale = np.random.uniform() / 10. + 1.
         image_data = cv2.resize(image_data, (0,0), fx = scale, fy = scale)    
-
         ## translate the image
         max_offx = (scale-1.) * w
         max_offy = (scale-1.) * h
@@ -77,10 +68,9 @@ def augment_image(image_data, bboxes, model_width, model_height, jitter=False):
         flip = np.random.binomial(1, .5)
         if flip > 0.5: 
             image_data = cv2.flip(image_data, 1)
-
+            
     image_data = cv2.resize(image_data, (model_height, model_width))
     bboxes2 = copy.deepcopy(bboxes)
-
     for bbox in bboxes2:
         for attr in (1,3): # adjust xmin and xmax
             if jitter: bbox[attr] = int(bbox[attr] * scale - offx)

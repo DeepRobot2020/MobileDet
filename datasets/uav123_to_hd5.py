@@ -284,9 +284,8 @@ def draw_bboxes(image, bboxes):
     return decoded_image
 
 def draw_on_images(dataset_images, dataset_boxes, out_dir='/tmp/uav123/'):
-    if os.path.exists(out_dir):
-        os.rmdir(out_dir)
-    os.mkdir(out_dir)
+    if not os.path.exists(out_dir):
+        os.mkdir(out_dir)
     for i in range(dataset_images.shape[0]):
         boxes = np.array(dataset_boxes[i]).reshape(-1, 5)
         img = draw_bboxes(dataset_images[i], boxes)
@@ -360,8 +359,7 @@ def _main(args):
 
     dataset_valid_boxes = valid_group.create_dataset(
         'boxes', shape=(0, ), maxshape=(None, ), dtype=uint32_dt)
-    
-  
+
     print('Adding ' + str(len(Xtrain)) + ' training data')
     add_to_dataset(dataset_train_images, dataset_train_boxes, Xtrain, ytrain, start=0)
     print('Adding ' + str(len(Xvalid)) + ' validation data')

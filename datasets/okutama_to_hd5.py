@@ -329,15 +329,15 @@ def draw_bboxes(image, bboxes):
     corners = bboxes[:, 1:]
     corners = np.array(corners, dtype=np.int)
     for corner in corners:
-        cv2.rectangle(decoded_image, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
+        cv2.rectangle(decoded_image, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 5)
     return decoded_image
 
 def draw_on_images(dataset_images, dataset_boxes, out_dir='/tmp/okutana/'):
-    if os.path.exists(out_dir):
-        os.rmdir(out_dir)
-    os.mkdir(out_dir)
+    if not os.path.exists(out_dir):
+        os.mkdir(out_dir)
     for i in range(dataset_images.shape[0]):
-        img = draw_bboxes(dataset_images[i], dataset_boxes[i])
+        boxes = np.array(dataset_boxes[i]).reshape(-1, 5)
+        img = draw_bboxes(dataset_images[i], boxes)
         out_img_path = os.path.join(out_dir, str(i)+'.jpg')
         cv2.imwrite(out_img_path, img)
     return 
@@ -358,6 +358,22 @@ def covert_bboxes_to_voc_style(list_bboxes, h=1080, w=1920):
         voc_bboxes.append(np.concatenate((label, corners), axis=1))
     return voc_bboxes
 
+def draw(image, bboxes):
+    decoded_image = copy.deepcopy(image)
+    if image.shape[0] > 3180:
+        decoded_image = cv2.imdecode(image, 1)
+    if bboxes is None:
+        return decoded_image
+    h, w = decoded_image.shape[:2]
+    xmin = w*(bboxes[:,0] - 0.5 * bboxes[:,2]).reshape(-1, 1)
+    ymin = h*(bboxes[:,1] - 0.5 * bboxes[:,3]).reshape(-1, 1) 
+    xmax = w*(bboxes[:,0] + 0.5 * bboxes[:,2]).reshape(-1, 1)
+    ymax = h*(bboxes[:,1] + 0.5 * bboxes[:,3]).reshape(-1, 1)
+    corners = np.concatenate((xmin, ymin, xmax, ymax), axis=1)
+    corners = np.array(corners, dtype=np.int)
+    for corner in corners:
+        cv2.rectangle(decoded_image, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
+    return decoded_image
 
 def _main(args):
     videos_path = os.path.expanduser(args.path_to_video)
@@ -367,6 +383,7 @@ def _main(args):
 
     if verify_enabled:
         print("Verifying the HD5 data....")
+        hdf5_path = os.path.join(hdf5_path, 'OkutamaAction.hdf5')
         if not os.path.exists(hdf5_path):
            print(hdf5_path + " does not exits!")
            return 
@@ -389,7 +406,7 @@ def _main(args):
     oa_h5file = h5py.File(fname, 'w')
     uint8_dt = h5py.special_dtype(
         vlen=np.dtype('uint8'))  # variable length uint8
-    float32_dt = h5py.special_dtype(
+    int32_dt = h5py.special_dtype(
         vlen=np.dtype('float32'))  # variable length uint8
 
     vlen_int_dt = h5py.special_dtype(
@@ -410,10 +427,10 @@ def _main(args):
 
     # store images as variable length uint8 arrays
     dataset_train_boxes = train_group.create_dataset(
-        'boxes', shape=(0, ), maxshape=(None, ), dtype=float32_dt)
+        'boxes', shape=(0, ), maxshape=(None, ), dtype=int32_dt)
 
     dataset_valid_boxes = valid_group.create_dataset(
-        'boxes', shape=(0, ), maxshape=(None, ), dtype=uint8_dt)
+        'boxes', shape=(0, ), maxshape=(None, ), dtype=int32_dt)
 
     # Get all the label txt files, there is supposed to have one per video
     label_files = glob.glob(labels_path + '/*.txt')
@@ -426,14 +443,24 @@ def _main(args):
         print('Processing label file ' + lfile.split('/')[-1])
         bboxes_dict = get_bounding_boxes(lfile, orig_shape)
         Xtrain, ytrain = select_images_boxes(jpg_images, bboxes_dict)
-        Xtrain, Xvalid, ytrain, yvalid = train_test_split(Xtrain, ytrain, test_size=0.33, random_state=42)   
+        out_dir = video_file.split('/')[-1]
+        out_dir = os.path.join('/mnt/data/tmp', out_dir)
+
+        if not os.path.exists(out_dir):
+            os.mkdir(out_dir)
+        for i in range(len(Xtrain)):
+            img = draw(Xtrain[i], ytrain[i])
+            out_img_path = os.path.join(out_dir, str(i)+'.jpg')
+            cv2.imwrite(out_img_path, img)
+
+        # Xtrain, Xvalid, ytrain, yvalid = train_test_split(Xtrain, ytrain, test_size=0.33, random_state=42)   
         # Convert the bboxes to be the same sytle as voc parse script
-        ytrain = covert_bboxes_to_voc_style(ytrain);
-        yvalid = covert_bboxes_to_voc_style(yvalid);
+        # ytrain = covert_bboxes_to_voc_style(ytrain);
+        # yvalid = covert_bboxes_to_voc_style(yvalid);
         print('Adding ' + str(len(Xtrain)) + ' training data')
-        add_to_dataset(dataset_train_images, dataset_train_boxes, Xtrain, ytrain)
-        print('Adding ' + str(len(Xvalid)) + ' validation data')
-        add_to_dataset(dataset_valid_images, dataset_valid_boxes, Xvalid, yvalid)   
+        # add_to_dataset(dataset_train_images, dataset_train_boxes, Xtrain, ytrain)
+        # print('Adding ' + str(len(Xvalid)) + ' validation data')
+        # add_to_dataset(dataset_valid_images, dataset_valid_boxes, Xvalid, yvalid)   
         break 
     print('Closing HDF5 file.')
     oa_h5file.close()

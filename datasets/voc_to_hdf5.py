@@ -27,7 +27,8 @@ voc_classes = [
     "pottedplant", "sheep", "sofa", "train", "tvmonitor"
 ]
 # We only care about below two classes (for now)
-aerial_classes = ["person", "bus", "car", "train"]
+vehicles = ["bus", "car", "train"]
+aerial_classes = ["person", "vehicle"]
 
 parser = argparse.ArgumentParser(
     description='Convert Pascal VOC 2007+2012 detection dataset to HDF5.')
@@ -65,9 +66,13 @@ def get_boxes_for_id(voc_path, year, image_id):
     for obj in root.iter('object'):
         difficult = obj.find('difficult').text
         label = obj.find('name').text
-        if label not in aerial_classes or int(
-                difficult) == 1:  # exclude difficult or unlisted classes
+        if int(difficult) == 1:  # exclude difficult or unlisted classes
             continue
+        if (label != 'person') and (label not in vehicles):
+            continue
+        # map 'car', 'bus' and 'train' to label 'vehicle'
+        if label in vehicles:
+            label = 'vehicle'
         xml_box = obj.find('bndbox')
         bbox = (aerial_classes.index(label), int(xml_box.find('xmin').text),
                 int(xml_box.find('ymin').text), int(xml_box.find('xmax').text),
@@ -130,7 +135,7 @@ def add_to_dataset(voc_path, year, ids, images, boxes, start=0):
     for i, voc_id in enumerate(ids):
         image_data = get_image_for_id(voc_path, year, voc_id)
         image_boxes = get_boxes_for_id(voc_path, year, voc_id)
-        # Ignore images without interested objects
+        # ignore images without interesting objects
         if image_boxes.shape[0] == 0:
             continue
         images[start + idx] = image_data
@@ -149,13 +154,17 @@ def _main(args):
     # Create HDF5 dataset structure
     print('Creating HDF5 dataset structure.')
     fname = os.path.join(voc_path, 'pascal_voc_07_12_person_vehicle.hdf5')
+    if os.path.exists(fname):
+        print('Removing old ' + fname)
+        os.remove(fname)
+
     voc_h5file = h5py.File(fname, 'w')
     uint8_dt = h5py.special_dtype(
         vlen=np.dtype('uint8'))  # variable length uint8
     vlen_int_dt = h5py.special_dtype(
         vlen=np.dtype(int))  # variable length default int
     train_group = voc_h5file.create_group('train')
-    val_group = voc_h5file.create_group('val')
+    val_group = voc_h5file.create_group('valid')
     test_group = voc_h5file.create_group('test')
 
     # store class list for reference class ids as csv fixed-length numpy string
@@ -163,36 +172,44 @@ def _main(args):
 
     # store images as variable length uint8 arrays
     train_images = train_group.create_dataset(
-        'images', shape=(total_train_ids, ), dtype=uint8_dt)
+        'images', shape=(total_train_ids, ), dtype=uint8_dt, chunks=True)
     val_images = val_group.create_dataset(
-        'images', shape=(len(val_ids), ), dtype=uint8_dt)
+        'images', shape=(len(val_ids), ), dtype=uint8_dt, chunks=True)
     test_images = test_group.create_dataset(
-        'images', shape=(len(test_ids), ), dtype=uint8_dt)
+        'images', shape=(len(test_ids), ), dtype=uint8_dt, chunks=True)
 
     # store boxes as class_id, xmin, ymin, xmax, ymax
     train_boxes = train_group.create_dataset(
-        'boxes', shape=(total_train_ids, ), dtype=vlen_int_dt)
+        'boxes', shape=(total_train_ids, ), dtype=vlen_int_dt, chunks=True)
     val_boxes = val_group.create_dataset(
-        'boxes', shape=(len(val_ids), ), dtype=vlen_int_dt)
+        'boxes', shape=(len(val_ids), ), dtype=vlen_int_dt, chunks=True)
     test_boxes = test_group.create_dataset(
-        'boxes', shape=(len(test_ids), ), dtype=vlen_int_dt)
+        'boxes', shape=(len(test_ids), ), dtype=vlen_int_dt, chunks=True)
 
     # process all ids and add to datasets
     print('Processing Pascal VOC 2007 datasets for training set.')
     last_2007 = add_to_dataset(voc_path, '2007', train_ids_2007, train_images,
                                train_boxes)
     print('Processing Pascal VOC 2012 training set.')
-    add_to_dataset(
+    total = add_to_dataset(
         voc_path,
         '2012',
         train_ids,
         train_images,
         train_boxes,
-        start=last_2007 + 1)
+        start=last_2007)
+    train_images.resize(total, axis=0)
+    train_boxes.resize(total, axis=0)
+
     print('Processing Pascal VOC 2012 val set.')
-    add_to_dataset(voc_path, '2012', val_ids, val_images, val_boxes)
+    total = add_to_dataset(voc_path, '2012', val_ids, val_images, val_boxes)
+    val_images.resize(total, axis=0)
+    val_boxes.resize(total, axis=0)
+ 
     print('Processing Pascal VOC 2007 test set.')
-    add_to_dataset(voc_path, '2007', test_ids, test_images, test_boxes)
+    total = add_to_dataset(voc_path, '2007', test_ids, test_images, test_boxes)
+    test_images.resize(total, axis=0)
+    test_boxes.resize(total, axis=0)
 
     print('Closing HDF5 file.')
     voc_h5file.close()

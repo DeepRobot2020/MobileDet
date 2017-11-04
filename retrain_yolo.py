@@ -8,15 +8,15 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import PIL
-import tensorflow as tf
 import h5py
 
+import tensorflow as tf
 from keras import backend as K
 from keras.layers import Input, Lambda, Conv2D
 from keras.models import load_model, Model
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
 
-from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_darknet19, yolo_body_darknet_feature,
+from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_darknet_feature,
                                      yolo_body_mobilenet, yolo_eval, yolo_head, yolo_loss)
 from mobiledet.utils.draw_boxes import draw_boxes
 
@@ -32,7 +32,7 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help="path to numpy data file (.npz) containing np.object array 'boxes' and np.uint8 array 'images'",
-    default='~/data/PascalVOC/VOCdevkit/pascal_voc_07_12.hdf5')
+    default='~/data/combined.hdf5')
 
 argparser.add_argument(
     '-a',
@@ -62,30 +62,24 @@ def _main(args):
     data_path    = os.path.expanduser(args.data_path)
     classes_path = os.path.expanduser(args.classes_path)
     anchors_path = os.path.expanduser(args.anchors_path)
-
-    voc_classes_path='model_data/pascal_classes.txt'
-    voc_class_names  = get_classes(voc_classes_path)
-
     class_names  = get_classes(classes_path)
-    print(voc_class_names)
-    print(class_names)
     
-    anchors      = get_anchors(anchors_path)
+    anchors = get_anchors(anchors_path)
+    
     # custom data saved as a numpy file.
     h5_data = h5py.File(data_path, 'r')
-    anchors = YOLO_ANCHORS
-    
-    H5_TRAIN_BOXES = np.array(h5_data['train/boxes'])
-    H5_TRAIN_IMAGES = np.array(h5_data['train/images'])
+  
+    TRAIN_BOXES = np.array(h5_data['train/boxes'])
+    TRAIN_IMAGES = np.array(h5_data['train/images'])
 
-    H5_VALID_BOXES = np.array(h5_data['val/boxes'])
-    H5_VALID_IMAGES = np.array(h5_data['val/images'])
+    VALID_BOXES = np.array(h5_data['valid/boxes'])
+    VALID_IMAGES = np.array(h5_data['valid/images'])
     # clear any previous sesson
     K.clear_session()
 
     model_body, model = create_model(anchors, class_names, load_pretrained=True)
-    train_batch_gen = VOCBatchGenerator(H5_TRAIN_IMAGES, H5_TRAIN_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, voc_class_names, class_names, jitter=True)
-    valid_batch_gen = VOCBatchGenerator(H5_VALID_IMAGES, H5_VALID_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, voc_class_names, class_names)
+    train_batch_gen = DataBatchGenerator(TRAIN_IMAGES, TRAIN_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=False)
+    valid_batch_gen = DataBatchGenerator(VALID_IMAGES, VALID_BOXES, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names)
     train(
         model,
         class_names,
@@ -105,7 +99,10 @@ def get_anchors(anchors_path):
     if os.path.isfile(anchors_path):
         with open(anchors_path) as f:
             anchors = f.readline()
-            anchors = [float(x) for x in anchors.split(',')]
+            try:
+                anchors = [float(x) for x in anchors.split(',')]
+            except:
+                anchors = YOLO_ANCHORS
             return np.array(anchors).reshape(-1, 2)
     else:
         Warning("Could not open anchors file, using default.")
@@ -144,7 +141,7 @@ def create_model(anchors, class_names, load_pretrained=False, freeze_body=False)
     extra_detect_feats = True
     
     feature_model = darknet19_feature_extractor(image_input);
-    yolo_model = yolo_body_darknet_feature(feature_model, len(anchors), len(class_names), extra_detection_feature=extra_detect_feats)
+    yolo_model = yolo_body_darknet_feature(feature_model, len(anchors), len(class_names), extra_feature=extra_detect_feats)
     topless_yolo = Model(yolo_model.input, yolo_model.layers[-2].output)
 
     if load_pretrained:
@@ -185,7 +182,7 @@ def create_model(anchors, class_names, load_pretrained=False, freeze_body=False)
 
     return model_body, model
 
-class VOCBatchGenerator:
+class DataBatchGenerator:
     def __init__(self, H5_IMAGES, 
                        H5_BOXES,
                        model_w, 
@@ -193,30 +190,26 @@ class VOCBatchGenerator:
                        feat_w,
                        feat_h, 
                        anchors,
-                       voc_class_names,
                        class_names, 
                        jitter=False):
         self.model_w = model_w
         self.model_h = model_h
-        self.feat_w = feat_w
-        self.feat_h = feat_h
-        self.voc_class_names =  voc_class_names
+        self.feat_w  = feat_w
+        self.feat_h  = feat_h
         self.class_names =  class_names        
-        self.H5_BOXES = H5_BOXES
-        self.H5_IMAGES = H5_IMAGES
-        self.anchors = anchors
+        self.H5_BOXES    = H5_BOXES
+        self.H5_IMAGES   = H5_IMAGES
+        self.anchors     = anchors
         self.unique_data_instances = self.H5_IMAGES.shape[0]
         self.jitter = jitter
 
     def flow_from_hdf5(self):
-        anchors = self.anchors   
         while True:
             batch_images = []
             batch_boxes = []
-            
             for i in range(BATCH_SIZE):        
-                image_data, bboxes = read_voc_datasets_train_batch(self.H5_IMAGES, self.H5_BOXES, self.voc_class_names, self.class_names)
-                image_data, bboxes = augment_image(image_data, bboxes, self.model_w, self.model_h, jitter=self.jitter)
+                image_data, bboxes = read_voc_datasets_train_batch(self.H5_IMAGES, self.H5_BOXES)
+                image_data, bboxes = augment_image(image_data, bboxes, self.model_w, self.model_h, self.jitter)
 
                 orig_size = np.array([image_data.shape[1], image_data.shape[0]])
                 orig_size = np.expand_dims(orig_size, axis=0)
@@ -244,11 +237,10 @@ class VOCBatchGenerator:
                 if boxz.shape[0]  < max_boxes:
                     zero_padding = np.zeros( (max_boxes-boxz.shape[0], 5), dtype=np.float32)
                     batch_boxes[i] = np.vstack((boxz, zero_padding))
-
                         
             batch_images = np.array(batch_images)
             batch_boxes = np.array(batch_boxes)
-            detectors_mask, matching_true_boxes = yolo_get_detector_mask(batch_boxes, anchors, model_shape=[self.model_h, self.model_w])
+            detectors_mask, matching_true_boxes = yolo_get_detector_mask(batch_boxes, self.anchors, model_shape=[self.model_h, self.model_w])
             X_train = [batch_images, batch_boxes, detectors_mask, matching_true_boxes]
             y_train = np.zeros(len(batch_images))
             yield X_train, y_train
@@ -270,8 +262,6 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
         })  # This is a hack to use the custom loss function in the last layer.
 
     logging = TensorBoard()
-    checkpoint = ModelCheckpoint("trained_stage_3_best.h5", monitor='val_loss',
-                                 save_weights_only=True, save_best_only=True)
     early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=15, verbose=1, mode='auto')
 
     train_steps_per_epoch = train_batch_gen.unique_data_instances // BATCH_SIZE
@@ -281,7 +271,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
     num_epochs = 30 
-
+    checkpoint = ModelCheckpoint("trained_stage_1_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),
                         steps_per_epoch = train_steps_per_epoch,
@@ -297,7 +287,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
             'yolo_loss': lambda y_true, y_pred: y_pred
         })  # This is a hack to use the custom loss function in the last layer.
 
-
+    checkpoint = ModelCheckpoint("trained_stage_2_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),
                         steps_per_epoch = train_steps_per_epoch,
@@ -309,7 +299,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
 
     model.save_weights('trained_stage_2.h5')
 
-
+    checkpoint = ModelCheckpoint("trained_stage_3_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),
                         steps_per_epoch = train_steps_per_epoch,
