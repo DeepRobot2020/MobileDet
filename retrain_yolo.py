@@ -70,7 +70,7 @@ def _main(args):
     K.clear_session()
 
     model_body, model = create_model(anchors, class_names)
-    train_batch_gen = DataBatchGenerator(train_images, train_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=False)
+    train_batch_gen = DataBatchGenerator(train_images, train_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=True)
     valid_batch_gen = DataBatchGenerator(valid_images, valid_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names)
     train(
         model,
