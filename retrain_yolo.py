@@ -15,14 +15,17 @@ from keras import backend as K
 from keras.layers import Input, Lambda, Conv2D
 from keras.models import load_model, Model
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
+from keras.optimizers import Adam
+from mobiledet.models.keras_yolo import preprocess_true_boxes, yolo_eval, yolo_head, yolo_loss
+from mobiledet.models.keras_yolo import yolo_eval, yolo_head, yolo_loss
+from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet
+                     
 
-from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_darknet_feature, yolo_body_darknet_shallow_feature,
-                                     yolo_body_mobilenet, yolo_eval, yolo_head, yolo_loss)
 from mobiledet.utils.draw_boxes import draw_boxes
 
 from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, augment_image
 from mobiledet.models.keras_yolo import yolo_get_detector_mask
-from mobiledet.models.keras_darknet19 import darknet19_feature_extractor, darknet_shallow_feature_extractor
+from mobiledet.models.keras_darknet19 import darknet_feature_extractor
 from cfg import *
 
 # Args
@@ -55,6 +58,8 @@ def _main(args):
     class_names  = get_classes(classes_path)
     print(anchors_path)
     anchors = get_anchors(anchors_path)
+    if SHRINK_FACTOR == 16:
+        anchors = anchors *2
     print('Anchors:')
     print(anchors)
     
@@ -132,29 +137,28 @@ def create_model(anchors, class_names, load_pretrained=True, freeze_body=False):
     matching_boxes_input = Input(shape=matching_boxes_shape)
 
     # Create model body.
-    feature_model = darknet19_feature_extractor(image_input);
-    yolo_model = yolo_body_darknet_feature(feature_model, len(anchors), len(class_names), extra_feature=True)
-    topless_yolo = Model(yolo_model.input, yolo_model.layers[-2].output)
-
+    feature_detector = darknet_feature_extractor(image_input, SHALLOW_DETECTOR)
+    yolo_model = yolo_body_darknet(feature_detector, len(anchors), len(class_names), network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
+    yolo_model.summary()
+    
     if load_pretrained:
-        # Save topless yolo:
-        topless_yolo_path = os.path.join('model_data', 'yolo_topless.h5')
-        print("Loading pre-trained weights")
-        yolo_path = os.path.join('model_data', 'yolo.h5')
-        model_body = load_model(yolo_path)
-        # Only load weights before the conv20 layer( the layer right before x4 and x2 space_to_depth conversion)
-        model_body = Model(model_body.inputs, model_body.layers[-8].output)               
-        model_body.save_weights(topless_yolo_path)
-        feature_model.load_weights(topless_yolo_path)
-      
+        # # Save topless yolo:
+        # topless_yolo_path = os.path.join('model_data', 'yolo_topless.h5')
+        # print("Loading pre-trained weights")
+        # yolo_path = os.path.join('model_data', 'yolo.h5')
+        # model_body = load_model(yolo_path)
+        # # Only load weights before the conv20 layer( the layer right before x4 and x2 space_to_depth conversion)
+        # model_body = Model(model_body.inputs, model_body.layers[-8].output)               
+        # model_body.save_weights(topless_yolo_path)
+        yolo_model.load_weights('trained_stage_1_best.h5')
     if freeze_body:
-        for layer in feature_model.layers:
+        for layer in feature_detector.layers:
             layer.trainable = False
-            
-    final_layer = Conv2D(len(anchors)*(5+len(class_names)), (1, 1), activation='linear')(topless_yolo.output)
 
-    model_body = Model(image_input, final_layer)
+    model_body = Model(image_input, yolo_model.output)
 
+
+    model_body.summary()
     # Place model loss on CPU to reduce GPU memory usage.
     with tf.device('/cpu:0'):
         # TODO: Replace Lambda with custom Keras layer for loss.
@@ -262,7 +266,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 30 
+    num_epochs = 1 
     checkpoint = ModelCheckpoint("trained_stage_1_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),

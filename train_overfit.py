@@ -17,9 +17,9 @@ from keras import backend as K
 from keras.layers import Input, Lambda
 from keras.models import Model
 
-from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobilenet,yolo_body_darknet_shallow_feature,
-                                     yolo_eval, yolo_head, yolo_loss, yolo_body_darknet_feature)
-from mobiledet.models.keras_darknet19 import darknet19_feature_extractor, darknet_shallow_feature_extractor
+from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobilenet,
+                                     yolo_eval, yolo_head, yolo_loss, yolo_body_darknet)
+from mobiledet.models.keras_darknet19 import darknet_feature_extractor
 from mobiledet.utils.draw_boxes import draw_boxes
 
 from cfg import *
@@ -145,10 +145,8 @@ def _main(args):
     print('Matching boxes for active detectors:')
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
-    # Create model body.
-    feats_model = darknet19_feature_extractor(image_input);
-    model_body = yolo_body_darknet_feature(feats_model, len(anchors), len(class_names), extra_feature=True)
-
+    feature_detector = darknet_feature_extractor(image_input, SHALLOW_DETECTOR)
+    model_body = yolo_body_darknet(feature_detector, len(anchors), len(class_names), network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
     model_body.summary()
 
     # TODO: Replace Lambda with custom Keras layer for loss.

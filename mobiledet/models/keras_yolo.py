@@ -19,6 +19,9 @@ from keras.layers import Lambda, Conv2D, BatchNormalization, Activation
 from keras.applications.mobilenet import MobileNet
 from keras.applications.resnet50 import ResNet50
 from keras.applications.vgg19 import VGG19
+from keras import backend as K
+from keras.layers import Input, Lambda, Conv2D
+from keras.models import load_model, Model
 
 sys.path.append('..')
 
@@ -69,73 +72,51 @@ def space_to_depth_x4_output_shape(input_shape):
             input_shape[3]) if input_shape[1] else (input_shape[0], None, None,
                                                     16 * input_shape[3])
 
-def yolo_body_darknet_feature(darknet, num_anchors, num_classes, extra_feature=False):
+def yolo_body_darknet(darknet, num_anchors, num_classes, network_config=[False, False]):
     """Create YOLO_V2 model CNN body in Keras."""
-    feature_for_detection_layer0 = 'leaky_re_lu_8'
-    feature_for_detection_layer1 = 'leaky_re_lu_13'
+    fine_grained_layers = [17, 27, 43]
 
-    inputs = darknet.inputs
-    conv20 = darknet.output
+    shallow_detector, use_x0 = network_config
 
-    conv13 = darknet.get_layer(feature_for_detection_layer1).output
-    conv13 = DarknetConv2D_BN_Leaky(64, (1, 1))(conv13)
+    if shallow_detector:
+        fine_grained_layers = fine_grained_layers[0:2]
+    else:
+        fine_grained_layers = fine_grained_layers[1:]
+
+    print(fine_grained_layers)
+    x0 = darknet.layers[fine_grained_layers[0]].output
+    x1 = darknet.layers[fine_grained_layers[1]].output
+    x2 = darknet.output
+
+    x0 = DarknetConv2D_BN_Leaky(16, (1, 1))(x0)
     # TODO: Allow Keras Lambda to use func arguments for output_shape?
-    conv13_reshaped = Lambda(
+    x0_reshaped = Lambda(
+        space_to_depth_x4,
+        output_shape=space_to_depth_x4_output_shape,
+        name='space_to_depth_x4')(x0)   
+
+    x1 = DarknetConv2D_BN_Leaky(64, (1, 1))(x1)
+    # TODO: Allow Keras Lambda to use func arguments for output_shape?
+    x1_reshaped = Lambda(
         space_to_depth_x2,
         output_shape=space_to_depth_x2_output_shape,
-        name='space_to_depth_x2')(conv13)
+        name='space_to_depth_x2')(x1)
 
-    if extra_feature:
-        conv8 = darknet.get_layer(feature_for_detection_layer0).output
-        conv8 = DarknetConv2D_BN_Leaky(16, (1, 1))(conv8)
-        # TODO: Allow Keras Lambda to use func arguments for output_shape?
-        conv8_reshaped = Lambda(
-            space_to_depth_x4,
-            output_shape=space_to_depth_x4_output_shape,
-            name='space_to_depth_x4')(conv8)   
-
-        x = concatenate([conv8_reshaped, conv13_reshaped, conv20])
+    if use_x0:
+        x = concatenate([x0_reshaped, x1_reshaped, x2])
     else:
-        x = concatenate([conv13_reshaped, conv20])
+        x = concatenate([x1_reshaped, x2])
 
-    x = DarknetConv2D_BN_Leaky(1024, (3, 3))(x)
-    x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
-    return Model(inputs, x)
-
-def yolo_body_darknet_shallow_feature(darknet, num_anchors, num_classes, extra_feature=False):
-    """Create YOLO_V2 model CNN body in Keras."""
-    feature_for_detection_layer0 = 'leaky_re_lu_5'
-    feature_for_detection_layer1 = 'leaky_re_lu_8'
-
-    inputs = darknet.inputs
-    conv15 = darknet.output
-
-    conv8 = darknet.get_layer(feature_for_detection_layer1).output
-    conv8 = DarknetConv2D_BN_Leaky(64, (1, 1))(conv8)
-    # TODO: Allow Keras Lambda to use func arguments for output_shape?
-    conv8_reshaped = Lambda(
-        space_to_depth_x2,
-        output_shape=space_to_depth_x2_output_shape,
-        name='space_to_depth_x2')(conv8)
-
-    if extra_feature:
-        conv5 = darknet.get_layer(feature_for_detection_layer0).output
-        conv5 = DarknetConv2D_BN_Leaky(16, (1, 1))(conv5)
-        # TODO: Allow Keras Lambda to use func arguments for output_shape?
-        conv5_reshaped = Lambda(
-            space_to_depth_x4,
-            output_shape=space_to_depth_x4_output_shape,
-            name='space_to_depth_x4')(conv5)   
-
-        x = concatenate([conv5_reshaped, conv8_reshaped, conv15])
+    if shallow_detector:
+        x = DarknetConv2D_BN_Leaky(512, (3, 3))(x)        
     else:
-        x = concatenate([conv8_reshaped, conv15])
+        x = DarknetConv2D_BN_Leaky(1024, (3, 3))(x)
 
-    x = DarknetConv2D_BN_Leaky(512, (3, 3))(x)
     x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
-    return Model(inputs, x)
+    return Model(darknet.inputs, x)
 
 
+# def yolo_body_darknet(darknet, num_anchors, num_classes, network_config=[False, False]):
 def yolo_body_mobilenet(inputs, num_anchors, num_classes, extra_detection_feature=False):
     """
     Mobile Detector Implementation
@@ -552,3 +533,87 @@ def preprocess_true_boxes(true_boxes, anchors, image_size, feature_size):
                 dtype=np.float32)
             matching_true_boxes[i, j, best_anchor] = adjusted_box
     return detectors_mask, matching_true_boxes
+
+def create_yolo_model(anchors, classes, input_shape=[416, 416], feature_detector='darknet19', extra_detection_feature=True, load_pretrained=True, freeze_body=False):
+    '''
+    returns the body of the model and the model
+
+    # Params:
+
+    load_pretrained: whether or not to load the pretrained model or initialize all weights
+
+    freeze_body: whether or not to freeze all weights except for the last layer's
+
+    # Returns:
+
+    model_body: YOLOv2 with new output layer
+
+    model: YOLOv2 with custom loss Lambda layer
+
+    '''
+    num_anchors = len(anchors)
+    image_height, image_width = input_shape
+    shallow_detector = False
+    if feature_detector in ['darknet19', 'mobilnet']:
+        feature_height = input_shape[0] // 32
+        feature_width  = input_shape[0] // 32
+    elif feature_detector in ['darknet19_shallow', 'mobilnet_shallow']:
+        feature_height = input_shape[0] // 16
+        feature_width  = input_shape[0] // 16
+        shallow_detector = True
+    else:
+        raise ValueError(feature_detector + 'is not supported!')
+
+    detectors_mask_shape = (feature_height, feature_width, num_anchors, 1)
+    matching_boxes_shape = (feature_height, feature_width, num_anchors, 5)
+
+    # Create model input layers.
+    image_input = Input(shape=(image_height, image_width, 3))
+    boxes_input = Input(shape=(None, 5))
+
+    detectors_mask_input = Input(shape=detectors_mask_shape)
+    matching_boxes_input = Input(shape=matching_boxes_shape)
+
+    # Create model body.
+    if not shallow_detector:
+        feature_model = darknet19_feature_extractor(image_input);
+        yolo_model = yolo_body_darknet_feature(feature_model, len(anchors), len(class_names), extra_feature=True)
+        if load_pretrained:
+            # Save topless yolo:
+            topless_yolo_path = os.path.join('model_data', 'yolo_topless.h5')
+            print("Loading pre-trained weights")
+            yolo_path = os.path.join('model_data', 'yolo.h5')
+            model_body = load_model(yolo_path)
+            # Only load weights before the conv20 layer( the layer right before x4 and x2 space_to_depth conversion)
+            model_body = Model(model_body.inputs, model_body.layers[-8].output)               
+            model_body.save_weights(topless_yolo_path)
+            feature_model.load_weights(topless_yolo_path)
+        if freeze_body:
+            for layer in feature_model.layers:
+                layer.trainable = False
+
+        model_body = Model(image_input, yolo_model.output)
+    else:
+        feature_model = darknet_shallow_feature_extractor(image_input);
+        yolo_model = yolo_body_darknet_shallow_feature(feature_model, len(anchors), len(class_names), extra_feature=True)
+        model_body = Model(image_input, yolo_model.output)
+
+    model_body.summary()
+    # Place model loss on CPU to reduce GPU memory usage.
+    with tf.device('/cpu:0'):
+        # TODO: Replace Lambda with custom Keras layer for loss.
+        model_loss = Lambda(
+            yolo_loss,
+            output_shape=(1, ),
+            name='yolo_loss',
+            arguments={'anchors': anchors,
+                       'num_classes': len(class_names)})([
+                           model_body.output, boxes_input,
+                           detectors_mask_input, matching_boxes_input
+                       ])
+
+    model = Model(
+        [model_body.input, boxes_input, detectors_mask_input,
+         matching_boxes_input], model_loss)
+
+    return model_body, model

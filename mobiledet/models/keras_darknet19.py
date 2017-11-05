@@ -90,3 +90,19 @@ def darknet_shallow_feature_extractor(inputs):
     DarknetConv2D_BN_Leaky(512, (3, 3)))(darknet.output)
     return Model(inputs, outputs=final_feature)
 
+
+def darknet_feature_extractor(inputs, shallow_mode=False):
+    """Generate Darknet-19 model for Imagenet classification."""
+    darknet = Model(inputs, darknet_body18()(inputs))
+    if shallow_mode:
+        darknet = Model(inputs, darknet_shallow_body()(inputs))
+        final_feature = compose(
+        DarknetConv2D_BN_Leaky(512, (3, 3)),
+        DarknetConv2D_BN_Leaky(512, (3, 3)))(darknet.output)
+    else:
+        darknet = Model(inputs, darknet_body18()(inputs))
+        final_feature = compose(
+        DarknetConv2D_BN_Leaky(1024, (3, 3)),
+        DarknetConv2D_BN_Leaky(1024, (3, 3)))(darknet.output)
+    return Model(inputs, outputs=final_feature)
+
