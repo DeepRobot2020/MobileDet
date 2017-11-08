@@ -115,8 +115,6 @@ def yolo_body_darknet(darknet, num_anchors, num_classes, network_config=[False, 
     x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
     return Model(darknet.inputs, x)
 
-
-# def yolo_body_darknet(darknet, num_anchors, num_classes, network_config=[False, False]):
 def yolo_body_mobilenet(inputs, num_anchors, num_classes, extra_detection_feature=False):
     """
     Mobile Detector Implementation

@@ -266,7 +266,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 1 
+    num_epochs = 33 
     checkpoint = ModelCheckpoint("trained_stage_1_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),

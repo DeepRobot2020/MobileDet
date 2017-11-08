@@ -7,28 +7,47 @@ import os
 import random
 
 import numpy as np
-from keras import backend as K
 from keras.models import load_model
 from PIL import Image, ImageDraw, ImageFont
 
 from mobiledet.models.keras_yolo import yolo_eval, yolo_head
+import tensorflow as tf
+from keras import backend as K
+from keras.layers import Input, Lambda, Conv2D
+from keras.models import load_model, Model
+from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
+from keras.optimizers import Adam
+from mobiledet.models.keras_yolo import preprocess_true_boxes, yolo_eval, yolo_head, yolo_loss
+from mobiledet.models.keras_yolo import yolo_eval, yolo_head, yolo_loss
+from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet
+                     
+
+from mobiledet.utils.draw_boxes import draw_boxes
+
+from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, augment_image
+from mobiledet.models.keras_yolo import yolo_get_detector_mask
+from mobiledet.models.keras_darknet19 import darknet_feature_extractor
+from cfg import *
+from keras.utils import plot_model
+
 
 parser = argparse.ArgumentParser(
     description='Run a YOLO_v2 style detection model on test images..')
 parser.add_argument(
-    'model_path',
+    '-m',
+    '--model_path',
     help='path to h5 model file containing body'
     'of a YOLO_v2 model')
 parser.add_argument(
     '-a',
     '--anchors_path',
     help='path to anchors file, defaults to yolo_anchors.txt',
-    default='model_data/yolo_anchors.txt')
+    default='model_data/aeryon_anchors.txt')
 parser.add_argument(
     '-c',
     '--classes_path',
     help='path to classes file, defaults to coco_classes.txt',
-    default='model_data/coco_classes.txt')
+    default='model_data/aeryon_classes.txt')
 parser.add_argument(
     '-t',
     '--test_path',
@@ -43,19 +62,106 @@ parser.add_argument(
     '-s',
     '--score_threshold',
     type=float,
-    help='threshold for bounding box scores, default .3',
-    default=.3)
+    help='threshold for bounding box scores, default .6',
+    default=.6)
 parser.add_argument(
     '-iou',
     '--iou_threshold',
     type=float,
-    help='threshold for non max suppression IOU, default .5',
-    default=.5)
+    help='threshold for non max suppression IOU, default .3',
+    default=.6)
 
+def get_anchors(anchors_path):
+    '''loads the anchors from a file'''
+    if os.path.isfile(anchors_path):
+        with open(anchors_path) as f:
+            anchors = f.readlines()
+            try:
+                anchors = [anchor.rstrip().split(',') for anchor in anchors]
+                anchors =  sum(anchors, [])
+                anchors = [float(x) for x in anchors]
+            except:
+                anchors = YOLO_ANCHORS
+            return np.array(anchors).reshape(-1, 2)
+    else:
+        Warning("Could not open anchors file, using default.")
+        return YOLO_ANCHORS
+
+def get_classes(classes_path):
+    '''loads the classes'''
+    with open(classes_path) as f:
+        class_names = f.readlines()
+    class_names = [c.strip() for c in class_names]
+    return class_names
+
+def create_model(anchors, class_names, load_pretrained=True, freeze_body=False, pretrained_path = None):
+    '''
+    returns the body of the model and the model
+
+    # Params:
+
+    load_pretrained: whether or not to load the pretrained model or initialize all weights
+
+    freeze_body: whether or not to freeze all weights except for the last layer's
+
+    # Returns:
+
+    model_body: YOLOv2 with new output layer
+
+    model: YOLOv2 with custom loss Lambda layer
+
+    '''
+    num_anchors = len(anchors)
+    detectors_mask_shape = (FEAT_H, FEAT_W, num_anchors, 1)
+    matching_boxes_shape = (FEAT_H, FEAT_W, num_anchors, 5)
+
+    # Create model input layers.
+    image_input = Input(shape=(IMAGE_H, IMAGE_W, 3))
+    boxes_input = Input(shape=(None, 5))
+
+    detectors_mask_input = Input(shape=detectors_mask_shape)
+    matching_boxes_input = Input(shape=matching_boxes_shape)
+
+    # Create model body.
+    feature_detector = darknet_feature_extractor(image_input, SHALLOW_DETECTOR)
+    yolo_model = yolo_body_darknet(feature_detector, len(anchors), len(class_names), network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
+    yolo_model.summary()
+    
+    if load_pretrained:
+        if pretrained_path == None:
+            yolo_model.load_weights('trained_stage_1_best.h5')
+        else:
+            yolo_model.load_weights(pretrained_path)
+    if freeze_body:
+        for layer in feature_detector.layers:
+            layer.trainable = False
+
+    model_body = Model(image_input, yolo_model.output)
+
+    model_body.summary()
+    # Place model loss on CPU to reduce GPU memory usage.
+    with tf.device('/cpu:0'):
+        # TODO: Replace Lambda with custom Keras layer for loss.
+        model_loss = Lambda(
+            yolo_loss,
+            output_shape=(1, ),
+            name='yolo_loss',
+            arguments={'anchors': anchors,
+                       'num_classes': len(class_names)})([
+                           model_body.output, boxes_input,
+                           detectors_mask_input, matching_boxes_input
+                       ])
+
+    model = Model(
+        [model_body.input, boxes_input, detectors_mask_input,
+         matching_boxes_input], model_loss)
+
+    plot_model(model, to_file='model.png')
+
+    return model_body, model
 
 def _main(args):
     model_path = os.path.expanduser(args.model_path)
-    assert model_path.endswith('.h5'), 'Keras model must be a .h5 file.'
     anchors_path = os.path.expanduser(args.anchors_path)
     classes_path = os.path.expanduser(args.classes_path)
     test_path = os.path.expanduser(args.test_path)
@@ -65,18 +171,12 @@ def _main(args):
         print('Creating output path {}'.format(output_path))
         os.mkdir(output_path)
 
-    sess = K.get_session()  # TODO: Remove dependence on Tensorflow session.
 
-    with open(classes_path) as f:
-        class_names = f.readlines()
-    class_names = [c.strip() for c in class_names]
-
-    with open(anchors_path) as f:
-        anchors = f.readline()
-        anchors = [float(x) for x in anchors.split(',')]
-        anchors = np.array(anchors).reshape(-1, 2)
-
-    yolo_model = load_model(model_path)
+    class_names  = get_classes(classes_path)
+    anchors = get_anchors(anchors_path)
+    print(class_names)
+    print(anchors)
+    yolo_model, model = create_model(anchors, class_names, model_path)
 
     # Verify model, anchors, and classes are compatible
     num_classes = len(class_names)
@@ -104,6 +204,10 @@ def _main(args):
     random.shuffle(colors)  # Shuffle colors to decorrelate adjacent classes.
     random.seed(None)  # Reset seed to default.
 
+
+    sess = K.get_session()  # TODO: Remove dependence on Tensorflow session.
+
+
     # Generate output tensor targets for filtered bounding boxes.
     # TODO: Wrap these backend operations with Keras layers.
     yolo_outputs = yolo_head(yolo_model.output, anchors, len(class_names))
@@ -114,7 +218,9 @@ def _main(args):
         score_threshold=args.score_threshold,
         iou_threshold=args.iou_threshold)
 
-    for image_file in os.listdir(test_path):
+    image_files = sorted(os.listdir(test_path))
+    for idx in range(len(image_files)):
+        image_file = image_files[idx]
         try:
             image_type = imghdr.what(os.path.join(test_path, image_file))
             if not image_type:
@@ -186,7 +292,7 @@ def _main(args):
             draw.text(text_origin, label, fill=(0, 0, 0), font=font)
             del draw
 
-        image.save(os.path.join(output_path, image_file), quality=90)
+        image.save(os.path.join(output_path, str(idx)+'.jpg'), quality=90)
     sess.close()
 
 
