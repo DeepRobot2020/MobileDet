@@ -137,22 +137,15 @@ def create_model(anchors, class_names, load_pretrained=True, freeze_body=False):
     matching_boxes_input = Input(shape=matching_boxes_shape)
 
     # Create model body.
-    feature_detector = darknet_feature_extractor(image_input, SHALLOW_DETECTOR)
-    yolo_model = yolo_body_darknet(feature_detector, len(anchors), len(class_names), network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
+    yolo_model = yolo_body_darknet(image_input, len(anchors), len(class_names), 
+        weights='yolov2', network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
     yolo_model.summary()
     
     if load_pretrained:
-        # # Save topless yolo:
-        # topless_yolo_path = os.path.join('model_data', 'yolo_topless.h5')
-        # print("Loading pre-trained weights")
-        # yolo_path = os.path.join('model_data', 'yolo.h5')
-        # model_body = load_model(yolo_path)
-        # # Only load weights before the conv20 layer( the layer right before x4 and x2 space_to_depth conversion)
-        # model_body = Model(model_body.inputs, model_body.layers[-8].output)               
-        # model_body.save_weights(topless_yolo_path)
         yolo_model.load_weights('trained_stage_1_best.h5')
+
     if freeze_body:
-        for layer in feature_detector.layers:
+        for layer in yolo_model.layers:
             layer.trainable = False
 
     model_body = Model(image_input, yolo_model.output)
@@ -266,7 +259,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 33 
+    num_epochs = 20 
     checkpoint = ModelCheckpoint("trained_stage_1_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),

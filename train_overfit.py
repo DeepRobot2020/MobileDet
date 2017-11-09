@@ -19,7 +19,7 @@ from keras.models import Model
 
 from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobilenet,
                                      yolo_eval, yolo_head, yolo_loss, yolo_body_darknet)
-from mobiledet.models.keras_darknet19 import darknet_feature_extractor
+# from mobiledet.models.keras_darknet19 import darknet_feature_extractor
 from mobiledet.utils.draw_boxes import draw_boxes
 
 from cfg import *
@@ -82,13 +82,15 @@ def _main(args):
     else:
         anchors = YOLO_ANCHORS
 
-    anchors = get_anchors(anchors_path)
+    # anchors = get_anchors(anchors_path)
+    anchors = YOLO_ANCHORS
+
     print('Prior anchor boxes:')    
     print(anchors)
     num_anchors = len(anchors)
     voc = h5py.File(voc_path, 'r')
     
-    test_id = 31
+    test_id = 28
     image = PIL.Image.open(io.BytesIO(voc['train/images'][test_id]))
     orig_size = np.array([image.width, image.height])
     orig_size = np.expand_dims(orig_size, axis=0)
@@ -145,9 +147,8 @@ def _main(args):
     print('Matching boxes for active detectors:')
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
-    feature_detector = darknet_feature_extractor(image_input, SHALLOW_DETECTOR)
-    model_body = yolo_body_darknet(feature_detector, len(anchors), len(class_names), network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
-    model_body.summary()
+    model_body = yolo_body_darknet(image_input, len(anchors), len(class_names), weights='yolov2', network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
+    # model_body.summary()
 
     # TODO: Replace Lambda with custom Keras layer for loss.
     model_loss = Lambda(
