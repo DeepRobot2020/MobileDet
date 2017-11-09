@@ -83,8 +83,7 @@ def yolo_body_darknet(inputs, num_anchors, num_classes, weights='yolov2', networ
 
     feature_model = darknet19(inputs, include_top=False)
     feature_model = Model(inputs=feature_model.input, outputs=feature_model.layers[final_feature_layer].output)
-
-
+    
     if weights == 'yolov2':
         print("Loading pre-trained yolov2 weights")
         # Save topless yolo:
@@ -156,7 +155,6 @@ def yolo_body_mobilenet(inputs, num_anchors, num_classes, weights='imagenet', ne
         trained_layers = trained_model.layers
         feature_layers = feature_model.layers
         for i in range(0, min(len(feature_layers), len(trained_layers))):
-            print(i)
             weights = trained_layers[i].get_weights()
             feature_layers[i].set_weights(weights)
 

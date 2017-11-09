@@ -14,7 +14,7 @@ IMAGE_H           = 608
 IMAGE_W           = 608
 
 SHALLOW_DETECTOR = True
-USE_X0_FEATURE = False
+USE_X0_FEATURE = True
 
 # Default anchor boxes
 YOLO_ANCHORS = np.array(

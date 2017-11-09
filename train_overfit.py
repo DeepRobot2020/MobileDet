@@ -82,8 +82,9 @@ def _main(args):
     else:
         anchors = YOLO_ANCHORS
 
-    # anchors = get_anchors(anchors_path)
-    anchors = YOLO_ANCHORS
+    anchors = get_anchors(anchors_path)
+    anchors = anchors*2
+    # anchors = YOLO_ANCHORS
 
     print('Prior anchor boxes:')    
     print(anchors)
@@ -147,8 +148,8 @@ def _main(args):
     print('Matching boxes for active detectors:')
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
-    model_body = yolo_body_darknet(image_input, len(anchors), len(class_names), weights='yolov2', network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
-    # model_body.summary()
+    yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names), weights='imagenet', network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
+    yolo_model.summary()
 
     # TODO: Replace Lambda with custom Keras layer for loss.
     model_loss = Lambda(
@@ -157,7 +158,7 @@ def _main(args):
         name='yolo_loss',
         arguments={'anchors': anchors,
                     'num_classes': len(class_names)})([
-                        model_body.output, boxes_input,
+                        yolo_model.output, boxes_input,
                         detectors_mask_input, matching_boxes_input
                     ])
 
@@ -187,7 +188,7 @@ def _main(args):
     model.save_weights('model_data/trained_stage_1.h5')
 
     # Create output variables for prediction.
-    yolo_outputs = yolo_head(model_body.output, anchors, len(class_names))
+    yolo_outputs = yolo_head(yolo_model.output, anchors, len(class_names))
     input_image_shape = K.placeholder(shape=(2, ))
     boxes, scores, classes = yolo_eval(
         yolo_outputs, input_image_shape, score_threshold=.3, iou_threshold=.9)
@@ -197,7 +198,7 @@ def _main(args):
     out_boxes, out_scores, out_classes = sess.run(
         [boxes, scores, classes],
         feed_dict={
-            model_body.input: image_data,
+            yolo_model.input: image_data,
             input_image_shape: [image.size[1], image.size[0]],
             K.learning_phase(): 0
         })
