@@ -38,6 +38,8 @@ import os
 import tensorflow as tf
 from tensorflow.python.tools.freeze_graph import freeze_graph
 
+import pdb;
+
 
 parser = argparse.ArgumentParser(
     description='Run a YOLO_v2 style detection model on test images..')
@@ -110,34 +112,6 @@ def get_classes(classes_path):
     class_names = [c.strip() for c in class_names]
     return class_names
 
-def convert_to_tensorflow(net_model):
-    num_output = 1
-    write_graph_def_ascii_flag = True
-    prefix_output_node_names_of_final_network = 'output_node'
-    output_graph_name = 'constant_graph_weights.pb'
-    output_fld = 'tensorflow_model/'
-    if not os.path.isdir(output_fld):
-        os.mkdir(output_fld)
-    K.set_learning_phase(0)
-
-    pred = [None]*num_output
-    pred_node_names = [None]*num_output
-    print('convert_to_tensorflow=====>: ')
-    for i in range(num_output):
-        pred_node_names[i] = prefix_output_node_names_of_final_network+str(i)
-        pred[i] = tf.identity(net_model.output[i], name=pred_node_names[i])
-
-
-    print('output nodes names are: ', pred_node_names)
-    sess = K.get_session()
-    if write_graph_def_ascii_flag:
-        f = 'only_the_graph_def.pb.ascii'
-        tf.train.write_graph(sess.graph.as_graph_def(), output_fld, f, as_text=True)
-        print('saved the graph definition in ascii format at: ', osp.join(output_fld, f))
-    constant_graph = graph_util.convert_variables_to_constants(sess, sess.graph.as_graph_def(), pred_node_names)
-    graph_io.write_graph(constant_graph, output_fld, output_graph_name, as_text=False)
-    print('saved the constant graph (ready for inference) at: ', osp.join(output_fld, output_graph_name))
-
 
 def freeze(tf_session, model_name, model_input_name, width, height, channels, model_output_name):
     input_binary = True
@@ -194,22 +168,21 @@ def _main(args):
     print(class_names)
     print(anchors)
 
-    yolo_model, model = create_model(anchors, class_names, load_pretrained=True, 
+    yolo_model, _ = create_model(anchors, class_names, load_pretrained=True, 
         feature_extractor=FEATURE_EXTRACTOR, pretrained_path=model_path)
 
-    plot_model(model, to_file='model.png')
-    # convert_to_tensorflow(model)
-    model.save('bar.hdf5')
+    # plot_model(yolo_model, to_file='model.png')
 
     model_file_basename, file_extension = os.path.splitext(os.path.basename(model_path))
 
-    model_input = model.input[0].name.replace(':0', '')
-    model_output = model.output.name.replace(':0', '')
+    model_input = yolo_model.input.name.replace(':0', '') # input_1
+    model_output = yolo_model.output.name.replace(':0', '') # conv2d_3/BiasAdd
 
     sess = K.get_session()
-    width, height, channels = int(model.input[0].shape[2]), int(model.input[0].shape[1]), int(model.input[0].shape[3])
+    width, height, channels = int(yolo_model.input.shape[2]), int(yolo_model.input.shape[1]), int(yolo_model.input.shape[3])
+
     # END OF keras specific code
-    freeze(sess, model_file_basename, model_input, width, height, channels, model_output)
+    # freeze(sess, model_file_basename, model_input, width, height, channels, model_output)
 
     # Verify model, anchors, and classes are compatible
     num_classes = len(class_names)
@@ -237,10 +210,8 @@ def _main(args):
     random.shuffle(colors)  # Shuffle colors to decorrelate adjacent classes.
     random.seed(None)  # Reset seed to default.
 
-
     sess = K.get_session()  # TODO: Remove dependence on Tensorflow session.
 
-    
     # Generate output tensor targets for filtered bounding boxes.
     # TODO: Wrap these backend operations with Keras layers.
     yolo_outputs = decode_yolo_output(yolo_model.output, anchors, len(class_names))
@@ -277,7 +248,7 @@ def _main(args):
 
         image_data /= 255.
         image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
-
+        start = time.time()
         out_boxes, out_scores, out_classes = sess.run(
             [boxes, scores, classes],
             feed_dict={
@@ -285,6 +256,8 @@ def _main(args):
                 input_image_shape: [image.size[1], image.size[0]],
                 K.learning_phase(): 0
             })
+        last = (time.time() - start)
+        print('Found {} boxes for {}'.format(len(out_boxes), image_file))        
         print('Found {} boxes for {}'.format(len(out_boxes), image_file))
 
         font = ImageFont.truetype(
