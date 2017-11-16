@@ -12,13 +12,14 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import PIL
+
 import tensorflow as tf
 from keras import backend as K
 from keras.layers import Input, Lambda
 from keras.models import Model
 
 from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobilenet,
-                                     yolo_eval, yolo_head, yolo_loss, yolo_body_darknet)
+                                     yolo_eval, decode_yolo_output, yolo_loss, yolo_body_darknet)
 # from mobiledet.models.keras_darknet19 import darknet_feature_extractor
 from mobiledet.utils.draw_boxes import draw_boxes
 
@@ -188,7 +189,7 @@ def _main(args):
     model.save_weights('model_data/trained_stage_1.h5')
 
     # Create output variables for prediction.
-    yolo_outputs = yolo_head(yolo_model.output, anchors, len(class_names))
+    yolo_outputs = decode_yolo_output(yolo_model.output, anchors, len(class_names))
     input_image_shape = K.placeholder(shape=(2, ))
     boxes, scores, classes = yolo_eval(
         yolo_outputs, input_image_shape, score_threshold=.3, iou_threshold=.9)

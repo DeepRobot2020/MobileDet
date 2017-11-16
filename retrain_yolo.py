@@ -16,8 +16,8 @@ from keras.layers import Input, Lambda, Conv2D
 from keras.models import load_model, Model
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
 from keras.optimizers import Adam
-from mobiledet.models.keras_yolo import preprocess_true_boxes, yolo_eval, yolo_head, yolo_loss
-from mobiledet.models.keras_yolo import yolo_eval, yolo_head, yolo_loss
+from mobiledet.models.keras_yolo import preprocess_true_boxes, yolo_eval, yolo_loss
+from mobiledet.models.keras_yolo import yolo_eval, yolo_loss, decode_yolo_output, create_model
 from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet
                      
 
@@ -25,7 +25,6 @@ from mobiledet.utils.draw_boxes import draw_boxes
 
 from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, augment_image
 from mobiledet.models.keras_yolo import yolo_get_detector_mask
-from mobiledet.models.keras_darknet19 import darknet_feature_extractor
 from cfg import *
 
 # Args
@@ -58,6 +57,7 @@ def _main(args):
     class_names  = get_classes(classes_path)
     print(anchors_path)
     anchors = get_anchors(anchors_path)
+
     if SHRINK_FACTOR == 16:
         anchors = anchors *2
     print('Anchors:')
@@ -74,7 +74,9 @@ def _main(args):
     # clear any previous sesson
     K.clear_session()
 
-    model_body, model = create_model(anchors, class_names)
+    model_body, model = create_model(anchors, class_names, 
+        feature_extractor=FEATURE_EXTRACTOR, load_pretrained=True, pretrained_path='weights/trained_stage_2_mobilenet_shallow_True_x0enabled_True.h5')
+
     train_batch_gen = DataBatchGenerator(train_images, train_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=True)
     valid_batch_gen = DataBatchGenerator(valid_images, valid_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names)
     train(
@@ -106,70 +108,6 @@ def get_anchors(anchors_path):
     else:
         Warning("Could not open anchors file, using default.")
         return YOLO_ANCHORS
-
-
-def create_model(anchors, class_names, load_pretrained=True, freeze_body=False):
-    '''
-    returns the body of the model and the model
-
-    # Params:
-
-    load_pretrained: whether or not to load the pretrained model or initialize all weights
-
-    freeze_body: whether or not to freeze all weights except for the last layer's
-
-    # Returns:
-
-    model_body: YOLOv2 with new output layer
-
-    model: YOLOv2 with custom loss Lambda layer
-
-    '''
-    num_anchors = len(anchors)
-    detectors_mask_shape = (FEAT_H, FEAT_W, num_anchors, 1)
-    matching_boxes_shape = (FEAT_H, FEAT_W, num_anchors, 5)
-
-    # Create model input layers.
-    image_input = Input(shape=(IMAGE_H, IMAGE_W, 3))
-    boxes_input = Input(shape=(None, 5))
-
-    detectors_mask_input = Input(shape=detectors_mask_shape)
-    matching_boxes_input = Input(shape=matching_boxes_shape)
-
-    # Create model body.
-    yolo_model = yolo_body_darknet(image_input, len(anchors), len(class_names), 
-        weights='yolov2', network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
-    yolo_model.summary()
-    
-    if load_pretrained:
-        yolo_model.load_weights('trained_stage_1_best.h5')
-
-    if freeze_body:
-        for layer in yolo_model.layers:
-            layer.trainable = False
-
-    model_body = Model(image_input, yolo_model.output)
-
-
-    model_body.summary()
-    # Place model loss on CPU to reduce GPU memory usage.
-    with tf.device('/cpu:0'):
-        # TODO: Replace Lambda with custom Keras layer for loss.
-        model_loss = Lambda(
-            yolo_loss,
-            output_shape=(1, ),
-            name='yolo_loss',
-            arguments={'anchors': anchors,
-                       'num_classes': len(class_names)})([
-                           model_body.output, boxes_input,
-                           detectors_mask_input, matching_boxes_input
-                       ])
-
-    model = Model(
-        [model_body.input, boxes_input, detectors_mask_input,
-         matching_boxes_input], model_loss)
-
-    return model_body, model
 
 class DataBatchGenerator:
     def __init__(self, H5_IMAGES, 
@@ -259,8 +197,10 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 20 
-    checkpoint = ModelCheckpoint("trained_stage_1_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
+    num_epochs = 1
+    weight_name = 'weights/trained_stage_1_best_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
+
+    checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),
                         steps_per_epoch = train_steps_per_epoch,
@@ -269,7 +209,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
                         epochs          = num_epochs,
                         workers=1, 
                         verbose=1)
-    model.save_weights('trained_stage_1.h5')
+    model.save_weights('weights/trained_stage_1_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
 
     adam = Adam(lr=0.0005, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
@@ -277,7 +217,8 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
             'yolo_loss': lambda y_true, y_pred: y_pred
         })  # This is a hack to use the custom loss function in the last layer.
 
-    checkpoint = ModelCheckpoint("trained_stage_2_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
+    weight_name = 'weights/trained_stage_2_best_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
+    checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),
                         steps_per_epoch = train_steps_per_epoch,
@@ -287,14 +228,16 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
                         workers=1, 
                         verbose=1)
 
-    model.save_weights('trained_stage_2.h5')
+    model.save_weights('weights/trained_stage_2_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
 
     adam = Adam(lr=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
         optimizer=adam, loss={
             'yolo_loss': lambda y_true, y_pred: y_pred
         })  
-    checkpoint = ModelCheckpoint("trained_stage_3_best.h5", monitor='val_loss', save_weights_only=True, save_best_only=True)
+    
+    weight_name = 'weights/trained_stage_3_best_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
+    checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),
                         steps_per_epoch = train_steps_per_epoch,
@@ -303,8 +246,8 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
                         epochs          = num_epochs,
                         workers=1, 
                         verbose=1)
+    model.save_weights('weights/trained_stage_3_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
 
-    model.save_weights('trained_stage_3.h5')
 
 def draw(model_body, class_names, anchors, image_data, image_set='val',
             weights_name='trained_stage_3_best.h5', out_path="output_images", save_all=True):
@@ -327,7 +270,7 @@ def draw(model_body, class_names, anchors, image_data, image_set='val',
     model_body.load_weights(weights_name)
 
     # Create output variables for prediction.
-    yolo_outputs = yolo_head(model_body.output, anchors, len(class_names))
+    yolo_outputs = decode_yolo_output(model_body.output, anchors, len(class_names))
     input_image_shape = K.placeholder(shape=(2, ))
     boxes, scores, classes = yolo_eval(
         yolo_outputs, input_image_shape, score_threshold=0.07, iou_threshold=0)

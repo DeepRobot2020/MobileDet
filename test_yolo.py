@@ -4,31 +4,39 @@ import argparse
 import colorsys
 import imghdr
 import os
+import os.path as osp
 import random
 
 import numpy as np
 from keras.models import load_model
 from PIL import Image, ImageDraw, ImageFont
 
-from mobiledet.models.keras_yolo import yolo_eval, yolo_head
 import tensorflow as tf
 from keras import backend as K
 from keras.layers import Input, Lambda, Conv2D
 from keras.models import load_model, Model
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
 from keras.optimizers import Adam
-from mobiledet.models.keras_yolo import preprocess_true_boxes, yolo_eval, yolo_head, yolo_loss
-from mobiledet.models.keras_yolo import yolo_eval, yolo_head, yolo_loss
-from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet
-                     
+
+from mobiledet.models.keras_yolo import preprocess_true_boxes
+from mobiledet.models.keras_yolo import yolo_eval, yolo_loss, decode_yolo_output, create_model
+from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet                     
 
 from mobiledet.utils.draw_boxes import draw_boxes
 
 from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, augment_image
 from mobiledet.models.keras_yolo import yolo_get_detector_mask
-from mobiledet.models.keras_darknet19 import darknet_feature_extractor
+
 from cfg import *
 from keras.utils import plot_model
+
+
+from tensorflow.python.framework import graph_util
+from tensorflow.python.framework import graph_io
+
+import os
+import tensorflow as tf
+from tensorflow.python.tools.freeze_graph import freeze_graph
 
 
 parser = argparse.ArgumentParser(
@@ -71,6 +79,14 @@ parser.add_argument(
     help='threshold for non max suppression IOU, default .3',
     default=.6)
 
+parser.add_argument(
+    '-tf',
+    '--convert_to_tensorflow',
+    type=float,
+    help='convert the model to tensorflow and save as protocol buffer',
+    default=True)
+
+
 def get_anchors(anchors_path):
     '''loads the anchors from a file'''
     if os.path.isfile(anchors_path):
@@ -94,71 +110,70 @@ def get_classes(classes_path):
     class_names = [c.strip() for c in class_names]
     return class_names
 
-def create_model(anchors, class_names, load_pretrained=True, freeze_body=False, pretrained_path = None):
-    '''
-    returns the body of the model and the model
+def convert_to_tensorflow(net_model):
+    num_output = 1
+    write_graph_def_ascii_flag = True
+    prefix_output_node_names_of_final_network = 'output_node'
+    output_graph_name = 'constant_graph_weights.pb'
+    output_fld = 'tensorflow_model/'
+    if not os.path.isdir(output_fld):
+        os.mkdir(output_fld)
+    K.set_learning_phase(0)
 
-    # Params:
+    pred = [None]*num_output
+    pred_node_names = [None]*num_output
+    print('convert_to_tensorflow=====>: ')
+    for i in range(num_output):
+        pred_node_names[i] = prefix_output_node_names_of_final_network+str(i)
+        pred[i] = tf.identity(net_model.output[i], name=pred_node_names[i])
 
-    load_pretrained: whether or not to load the pretrained model or initialize all weights
 
-    freeze_body: whether or not to freeze all weights except for the last layer's
+    print('output nodes names are: ', pred_node_names)
+    sess = K.get_session()
+    if write_graph_def_ascii_flag:
+        f = 'only_the_graph_def.pb.ascii'
+        tf.train.write_graph(sess.graph.as_graph_def(), output_fld, f, as_text=True)
+        print('saved the graph definition in ascii format at: ', osp.join(output_fld, f))
+    constant_graph = graph_util.convert_variables_to_constants(sess, sess.graph.as_graph_def(), pred_node_names)
+    graph_io.write_graph(constant_graph, output_fld, output_graph_name, as_text=False)
+    print('saved the constant graph (ready for inference) at: ', osp.join(output_fld, output_graph_name))
 
-    # Returns:
 
-    model_body: YOLOv2 with new output layer
+def freeze(tf_session, model_name, model_input_name, width, height, channels, model_output_name):
+    input_binary = True
+    graph_def = tf_session.graph.as_graph_def()
 
-    model: YOLOv2 with custom loss Lambda layer
+    tf.train.Saver().save(tf_session, model_name + '.ckpt')
+    tf.train.write_graph(tf_session.graph.as_graph_def(), logdir='.', name=model_name + '.binary.pb', as_text=not input_binary)
 
-    '''
-    num_anchors = len(anchors)
-    detectors_mask_shape = (FEAT_H, FEAT_W, num_anchors, 1)
-    matching_boxes_shape = (FEAT_H, FEAT_W, num_anchors, 5)
+    # We save out the graph to disk, and then call the const conversion routine.
+    checkpoint_state_name = model_name + ".ckpt.index"
+    input_graph_name = model_name + ".binary.pb"
+    output_graph_name = model_name + ".pb"
 
-    # Create model input layers.
-    image_input = Input(shape=(IMAGE_H, IMAGE_W, 3))
-    boxes_input = Input(shape=(None, 5))
+    input_graph_path = os.path.join(".", input_graph_name)
+    input_saver_def_path = ""
+    input_checkpoint_path = os.path.join(".", model_name + '.ckpt')
 
-    detectors_mask_input = Input(shape=detectors_mask_shape)
-    matching_boxes_input = Input(shape=matching_boxes_shape)
+    output_node_names = model_output_name
+    restore_op_name = "save/restore_all"
+    filename_tensor_name = "save/Const:0"
 
-    # Create model body.
-    feature_detector = darknet_feature_extractor(image_input, SHALLOW_DETECTOR)
-    yolo_model = yolo_body_darknet(feature_detector, len(anchors), len(class_names), network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
-    yolo_model.summary()
-    
-    if load_pretrained:
-        if pretrained_path == None:
-            yolo_model.load_weights('trained_stage_1_best.h5')
-        else:
-            yolo_model.load_weights(pretrained_path)
-    if freeze_body:
-        for layer in feature_detector.layers:
-            layer.trainable = False
+    output_graph_path = os.path.join('.', output_graph_name)
+    clear_devices = False
 
-    model_body = Model(image_input, yolo_model.output)
+    freeze_graph(input_graph_path, input_saver_def_path,
+                 input_binary, input_checkpoint_path,
+                 output_node_names, restore_op_name,
+                 filename_tensor_name, output_graph_path,
+                 clear_devices, "")
 
-    model_body.summary()
-    # Place model loss on CPU to reduce GPU memory usage.
-    with tf.device('/cpu:0'):
-        # TODO: Replace Lambda with custom Keras layer for loss.
-        model_loss = Lambda(
-            yolo_loss,
-            output_shape=(1, ),
-            name='yolo_loss',
-            arguments={'anchors': anchors,
-                       'num_classes': len(class_names)})([
-                           model_body.output, boxes_input,
-                           detectors_mask_input, matching_boxes_input
-                       ])
+    print("Model loaded from: %s" % model_name)
+    print("Output written to: %s" % output_graph_path)
+    print("Model input name : %s" % model_input_name)
+    print("Model input size : %dx%dx%d (WxHxC)" % (width, height, channels))
+    print("Model output name: %s" % model_output_name)
 
-    model = Model(
-        [model_body.input, boxes_input, detectors_mask_input,
-         matching_boxes_input], model_loss)
-
-    plot_model(model, to_file='model.png')
-
-    return model_body, model
 
 def _main(args):
     model_path = os.path.expanduser(args.model_path)
@@ -171,12 +186,30 @@ def _main(args):
         print('Creating output path {}'.format(output_path))
         os.mkdir(output_path)
 
-
     class_names  = get_classes(classes_path)
     anchors = get_anchors(anchors_path)
+    if SHALLOW_DETECTOR:
+        anchors = anchors * 2
+
     print(class_names)
     print(anchors)
-    yolo_model, model = create_model(anchors, class_names, model_path)
+
+    yolo_model, model = create_model(anchors, class_names, load_pretrained=True, 
+        feature_extractor=FEATURE_EXTRACTOR, pretrained_path=model_path)
+
+    plot_model(model, to_file='model.png')
+    # convert_to_tensorflow(model)
+    model.save('bar.hdf5')
+
+    model_file_basename, file_extension = os.path.splitext(os.path.basename(model_path))
+
+    model_input = model.input[0].name.replace(':0', '')
+    model_output = model.output.name.replace(':0', '')
+
+    sess = K.get_session()
+    width, height, channels = int(model.input[0].shape[2]), int(model.input[0].shape[1]), int(model.input[0].shape[3])
+    # END OF keras specific code
+    freeze(sess, model_file_basename, model_input, width, height, channels, model_output)
 
     # Verify model, anchors, and classes are compatible
     num_classes = len(class_names)
@@ -207,10 +240,10 @@ def _main(args):
 
     sess = K.get_session()  # TODO: Remove dependence on Tensorflow session.
 
-
+    
     # Generate output tensor targets for filtered bounding boxes.
     # TODO: Wrap these backend operations with Keras layers.
-    yolo_outputs = yolo_head(yolo_model.output, anchors, len(class_names))
+    yolo_outputs = decode_yolo_output(yolo_model.output, anchors, len(class_names))
     input_image_shape = K.placeholder(shape=(2, ))
     boxes, scores, classes = yolo_eval(
         yolo_outputs,

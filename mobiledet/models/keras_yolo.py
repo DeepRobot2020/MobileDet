@@ -14,8 +14,8 @@ from keras.applications.mobilenet import MobileNet
 from ..utils import compose
 from .keras_darknet19 import (DarknetConv2D, DarknetConv2D_BN_Leaky,
                               darknet19)
-from .keras_mobilenet import _depthwise_conv_block, relu6, mobile_net
-
+from .keras_mobilenet import _depthwise_conv_block, mobile_net
+from cfg import *
 
 sys.path.append('..')
 
@@ -46,6 +46,9 @@ def space_to_depth_x4(x):
     # Import currently required to make Lambda work.
     import tensorflow as tf
     return tf.space_to_depth(x, block_size=4)
+
+def relu_6(x):
+    return K.relu(x, max_value=6)
 
 
 def space_to_depth_x2_output_shape(input_shape):
@@ -121,8 +124,8 @@ def yolo_body_darknet(inputs, num_anchors, num_classes, weights='yolov2', networ
         x = concatenate([x0_reshaped, x1_reshaped, x2])
     else:
         x = concatenate([x1_reshaped, x2])
-
     x = DarknetConv2D_BN_Leaky(num_fina_layers, (3, 3))(x)
+    
     x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
     return Model(feature_model.inputs, x)
 
@@ -168,7 +171,8 @@ def yolo_body_mobilenet(inputs, num_anchors, num_classes, weights='imagenet', ne
     # Reroute x1
     x1 = Conv2D(64, (1, 1), padding='same', use_bias=False, strides=(1, 1))(x1)
     x1 = BatchNormalization()(x1)
-    x1 = Activation(relu6)(x1)
+    # To keep keras to tensorflow conversion happy 
+    x1 = Lambda(relu_6)(x1)
 
     x1_reshaped = Lambda(
         space_to_depth_x2,
@@ -178,7 +182,8 @@ def yolo_body_mobilenet(inputs, num_anchors, num_classes, weights='imagenet', ne
     # Reroute x0
     x0 = Conv2D(16, (1, 1), padding='same', use_bias=False, strides=(1, 1))(x0)
     x0 = BatchNormalization()(x0)
-    x0 = Activation(relu6)(x0)
+    x0 = Lambda(relu_6)(x0)
+
     x0_reshaped = Lambda(
         space_to_depth_x4,
         output_shape=space_to_depth_x4_output_shape,
@@ -197,7 +202,7 @@ def yolo_body_mobilenet(inputs, num_anchors, num_classes, weights='imagenet', ne
     return model
 
 
-def yolo_head(feats, anchors, num_classes):
+def decode_yolo_output(feats, anchors, num_classes):
     """Convert final layer features to bounding box parameters.
 
     Parameters
@@ -266,7 +271,6 @@ def yolo_head(feats, anchors, num_classes):
     # Note: YOLO iterates over height index before width index.
     box_xy = (box_xy + conv_index) / conv_dims
     box_wh = box_wh * anchors_tensor / conv_dims
-
     return box_xy, box_wh, box_confidence, box_class_probs
 
 
@@ -281,7 +285,6 @@ def yolo_boxes_to_corners(box_xy, box_wh):
         box_maxes[..., 1:2],  # y_max
         box_maxes[..., 0:1]  # x_max
     ])
-
 
 def yolo_loss(args,
               anchors,
@@ -330,7 +333,7 @@ def yolo_loss(args,
     no_object_scale = 1
     class_scale = 1
     coordinates_scale = 1
-    pred_xy, pred_wh, pred_confidence, pred_class_prob = yolo_head(
+    pred_xy, pred_wh, pred_confidence, pred_class_prob = decode_yolo_output(
         yolo_output, anchors, num_classes)
 
     # Unadjusted box predictions for loss.
@@ -432,14 +435,6 @@ def yolo_loss(args,
     return total_loss
 
 
-def yolo(inputs, anchors, num_classes):
-    """Generate a complete YOLO_v2 localization model."""
-    num_anchors = len(anchors)
-    body = yolo_body(inputs, num_anchors, num_classes)
-    outputs = yolo_head(body.output, anchors, num_classes)
-    return outputs
-
-
 def yolo_filter_boxes(boxes, box_confidence, box_class_probs, threshold=.6):
     """Filter YOLO boxes based on object and class confidence."""
     box_scores = box_confidence * box_class_probs
@@ -530,7 +525,8 @@ def preprocess_true_boxes(true_boxes, anchors, image_size, feature_size):
         # scale box to convolutional feature spatial dimensions
         box_class = box[4:5]
         box = box[0:4] * np.array(
-            [conv_width, conv_height, conv_width, conv_height])
+            [conv_height, conv_width, conv_height, conv_width])
+
         i = np.floor(box[1]).astype('int')
         j = np.floor(box[0]).astype('int')
         best_iou = 0
@@ -563,3 +559,75 @@ def preprocess_true_boxes(true_boxes, anchors, image_size, feature_size):
                 dtype=np.float32)
             matching_true_boxes[i, j, best_anchor] = adjusted_box
     return detectors_mask, matching_true_boxes
+
+def create_model(anchors, class_names, feature_extractor='darknet19', 
+    load_pretrained=False, pretrained_path=None, freeze_body=False):
+    '''
+    returns the body of the model and the model
+
+    # Params:
+
+    load_pretrained: whether or not to load the pretrained model or initialize all weights
+
+    freeze_body: whether or not to freeze all weights except for the last layer's
+
+    # Returns:
+
+    model_body: YOLOv2 with new output layer
+
+    model: YOLOv2 with custom loss Lambda layer
+
+    '''
+    num_anchors = len(anchors)
+
+    detectors_mask_shape = (FEAT_H, FEAT_W, num_anchors, 1)
+    matching_boxes_shape = (FEAT_H, FEAT_W, num_anchors, 5)
+
+    # Create model input layers.
+    image_input = Input(shape=(IMAGE_H, IMAGE_W, 3))
+    boxes_input = Input(shape=(None, 5))
+
+    detectors_mask_input = Input(shape=detectors_mask_shape)
+    matching_boxes_input = Input(shape=matching_boxes_shape)
+
+    # Create model body.
+    if feature_extractor == 'darknet19':
+        yolo_model = yolo_body_darknet(image_input, len(anchors), len(class_names), weights=None,
+            network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
+    elif feature_extractor == 'mobilenet':
+        yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names), weights=None,
+            network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
+    else:
+        assert(False)
+        
+    # yolo_model.summary()
+    
+    if load_pretrained:
+        if pretrained_path:
+            yolo_model.load_weights(pretrained_path)
+        else:
+            print('No pretrained weights!')
+            
+    if freeze_body:
+        for layer in yolo_model.layers:
+            layer.trainable = False
+
+    model_body = Model(image_input, yolo_model.output)
+    # model_body.summary()
+    # Place model loss on CPU to reduce GPU memory usage.
+    with tf.device('/cpu:0'):
+        # TODO: Replace Lambda with custom Keras layer for loss.
+        model_loss = Lambda(
+            yolo_loss,
+            output_shape=(1, ),
+            name='yolo_loss',
+            arguments={'anchors': anchors,
+                        'num_classes': len(class_names)})([
+                            model_body.output, boxes_input,
+                            detectors_mask_input, matching_boxes_input
+                        ])
+
+    model = Model(
+        [model_body.input, boxes_input, detectors_mask_input,
+         matching_boxes_input], model_loss)
+    return model_body, model

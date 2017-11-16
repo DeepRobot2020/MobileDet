@@ -7,7 +7,7 @@ import keras.backend as K
 from keras.layers import Input, InputSpec
 from keras.layers import Conv2D
 from keras.layers import BatchNormalization
-from keras.layers import Activation
+from keras.layers import Activation, Lambda
 from keras.layers import GlobalAvgPool2D, Reshape, Dropout
 from keras.models import Model
 from keras import initializers, regularizers, constraints
@@ -62,16 +62,16 @@ def mobile_net(input_size=(224, 224, 3), include_top=True, shallow_model=False, 
     return model
 
 
-def relu6(x):
+def relu_6(x):
     return K.relu(x, max_value=6)
-
 
 def _conv_block(inputs, filters, alpha, kernel=(3, 3), strides=(1, 1), name='conv1'):
     """ Standard Convolutional Block"""
     filters = int(filters * alpha)
     x = Conv2D(filters, kernel, padding='same', use_bias=False, strides=strides, name=name)(inputs)
     x = BatchNormalization(name='%s_bn' % name)(x)
-    return Activation(relu6, name='%s_relu' % name)(x)
+    x = Lambda(relu_6, name='%s_relu' % name)(x)
+    return x
 
 
 def _depthwise_conv_block(inputs, pointwise_conv_filters, alpha, depth_multiplier=1, strides=(1, 1), block_id=1):
@@ -83,11 +83,12 @@ def _depthwise_conv_block(inputs, pointwise_conv_filters, alpha, depth_multiplie
                         depth_multiplier=depth_multiplier, strides=strides,
                         use_bias=False, name='conv_dw_%d' % block_id)(inputs)
     x = BatchNormalization(name='conv_dw_%d_bn' % block_id)(x)
-    x = Activation(relu6, name='conv_dw_%d_relu' % block_id)(x)
+    x = Lambda(relu_6, name='conv_dw_%d_relu' % block_id)(x)
 
     x = Conv2D(pointwise_conv_filters, (1, 1), padding='same', use_bias=False, strides=(1, 1), name='conv_pw_%d' % block_id)(x)
     x = BatchNormalization(name='conv_pw_%d_bn' % block_id)(x)
-    return Activation(relu6, name='conv_pw_%d_relu' % block_id)(x)
+    x = Lambda(relu_6, name='conv_pw_%d_relu' % block_id)(x)
+    return x
 
 
 class DepthwiseConv2D(Conv2D):
