@@ -11,7 +11,7 @@ from keras.layers import Input, Lambda, Conv2D, BatchNormalization, Activation
 from keras.applications.mobilenet import MobileNet
 
 
-from ..utils import compose
+# from ..utils import compose
 from .keras_darknet19 import (DarknetConv2D, DarknetConv2D_BN_Leaky,
                               darknet19)
 from .keras_mobilenet import _depthwise_conv_block, mobile_net
@@ -77,11 +77,11 @@ def yolo_body_darknet(inputs, num_anchors, num_classes, weights='yolov2', networ
 
     if shallow_detector:
         fine_grained_layers = fine_grained_layers[0:2]
-        num_fina_layers = 512
+        num_final_layers = 512
         final_feature_layer = 43
     else:
         fine_grained_layers = fine_grained_layers[1:]
-        num_fina_layers = 1024
+        num_final_layers = 1024
         final_feature_layer = -1
 
     feature_model = darknet19(inputs, include_top=False)
@@ -103,8 +103,8 @@ def yolo_body_darknet(inputs, num_anchors, num_classes, weights='yolov2', networ
     x1 = feature_model.layers[fine_grained_layers[1]].output
     x0 = feature_model.layers[fine_grained_layers[0]].output
 
-    x2 = DarknetConv2D_BN_Leaky(num_fina_layers, (3, 3))(x2)    
-    x2 = DarknetConv2D_BN_Leaky(num_fina_layers, (3, 3))(x2)    
+    x2 = DarknetConv2D_BN_Leaky(num_final_layers, (3, 3))(x2)    
+    x2 = DarknetConv2D_BN_Leaky(num_final_layers, (3, 3))(x2)    
 
     x1 = DarknetConv2D_BN_Leaky(64, (1, 1))(x1)
     # TODO: Allow Keras Lambda to use func arguments for output_shape?
@@ -114,7 +114,7 @@ def yolo_body_darknet(inputs, num_anchors, num_classes, weights='yolov2', networ
         name='space_to_depth_x2')(x1)
         
     x0 = DarknetConv2D_BN_Leaky(16, (1, 1))(x0)
-    # TODO: Allow Keras Lambda to use func arguments for output_shape?
+    # TODO:  #304Allow Keras Lambda to use func arguments for output_shape?
     x0_reshaped = Lambda(
         space_to_depth_x4,
         output_shape=space_to_depth_x4_output_shape,
@@ -124,7 +124,7 @@ def yolo_body_darknet(inputs, num_anchors, num_classes, weights='yolov2', networ
         x = concatenate([x0_reshaped, x1_reshaped, x2])
     else:
         x = concatenate([x1_reshaped, x2])
-    x = DarknetConv2D_BN_Leaky(num_fina_layers, (3, 3))(x)
+    x = DarknetConv2D_BN_Leaky(num_final_layers, (3, 3))(x)
     
     x = DarknetConv2D(num_anchors * (num_classes + 5), (1, 1))(x)
     return Model(feature_model.inputs, x)
@@ -424,6 +424,7 @@ def yolo_loss(args,
     coordinates_loss_sum = K.sum(coordinates_loss)
     total_loss = 0.5 * (
         confidence_loss_sum + classification_loss_sum + coordinates_loss_sum)
+        
     if print_loss:
         total_loss = tf.Print(
             total_loss, [

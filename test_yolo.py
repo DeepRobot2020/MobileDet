@@ -28,6 +28,7 @@ from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, a
 from mobiledet.models.keras_yolo import yolo_get_detector_mask
 
 from cfg import *
+from mobiledet.utils import *
 from keras.utils import plot_model
 
 
@@ -39,7 +40,7 @@ import tensorflow as tf
 from tensorflow.python.tools.freeze_graph import freeze_graph
 
 import pdb;
-
+import time
 
 parser = argparse.ArgumentParser(
     description='Run a YOLO_v2 style detection model on test images..')
@@ -87,30 +88,6 @@ parser.add_argument(
     type=float,
     help='convert the model to tensorflow and save as protocol buffer',
     default=True)
-
-
-def get_anchors(anchors_path):
-    '''loads the anchors from a file'''
-    if os.path.isfile(anchors_path):
-        with open(anchors_path) as f:
-            anchors = f.readlines()
-            try:
-                anchors = [anchor.rstrip().split(',') for anchor in anchors]
-                anchors =  sum(anchors, [])
-                anchors = [float(x) for x in anchors]
-            except:
-                anchors = YOLO_ANCHORS
-            return np.array(anchors).reshape(-1, 2)
-    else:
-        Warning("Could not open anchors file, using default.")
-        return YOLO_ANCHORS
-
-def get_classes(classes_path):
-    '''loads the classes'''
-    with open(classes_path) as f:
-        class_names = f.readlines()
-    class_names = [c.strip() for c in class_names]
-    return class_names
 
 
 def freeze(tf_session, model_name, model_input_name, width, height, channels, model_output_name):

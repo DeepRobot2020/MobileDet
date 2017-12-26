@@ -1,6 +1,5 @@
 import numpy as np
 
-
 class Box(object):
     def __init__(self, xc, yc, w, h):
         self.x = xc

@@ -5,7 +5,10 @@ import cv2
 import copy
 import numpy as np
 import io
+import os
 import PIL
+import re
+from cfg import *
 
 def compose(*funcs):
     """Compose arbitrarily many functions, evaluated left to right.
@@ -17,6 +20,30 @@ def compose(*funcs):
         return reduce(lambda f, g: lambda *a, **kw: g(f(*a, **kw)), funcs)
     else:
         raise ValueError('Composition of empty sequence not supported.')
+
+
+def get_anchors(anchors_path):
+    '''loads the anchors from a file'''
+    if os.path.isfile(anchors_path):
+        with open(anchors_path) as f:
+            anchors = f.readlines()
+            try:
+                anchors = [re.findall(r'\d*\.\d+|\d+', anchor) for anchor in anchors]
+                anchors =  sum(anchors, [])
+                anchors = [float(x) for x in anchors]
+            except:
+                anchors = YOLO_ANCHORS
+            return np.array(anchors).reshape(-1, 2)
+    else:
+        Warning("Could not open anchors file, using default.")
+        return YOLO_ANCHORS
+
+def get_classes(classes_path):
+    '''loads the classes'''
+    with open(classes_path) as f:
+        class_names = f.readlines()
+    class_names = [c.strip() for c in class_names]
+    return class_names
 
 def brightness_augment(image):
     image = np.array(image, dtype=np.uint8)

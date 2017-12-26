@@ -19,12 +19,10 @@ from keras.optimizers import Adam
 from mobiledet.models.keras_yolo import preprocess_true_boxes, yolo_eval, yolo_loss
 from mobiledet.models.keras_yolo import yolo_eval, yolo_loss, decode_yolo_output, create_model
 from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet
-                     
-
+from mobiledet.models.keras_yolo import yolo_get_detector_mask
 from mobiledet.utils.draw_boxes import draw_boxes
 
-from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, augment_image
-from mobiledet.models.keras_yolo import yolo_get_detector_mask
+from mobiledet.utils import *
 from cfg import *
 
 # Args
@@ -35,19 +33,19 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help="path to numpy data file (.npz) containing np.object array 'boxes' and np.uint8 array 'images'",
-    default='~/data/combined.hdf5')
+    default='~/data/pascal_voc_07_12_person_vehicle.hdf5')
 
 argparser.add_argument(
     '-a',
     '--anchors_path',
     help='path to anchors file, defaults to yolo_anchors.txt',
-    default=os.path.join('model_data', 'aeryon_anchors.txt'))
+    default=os.path.join('model_data', 'pascal_anchors.txt'))
 
 argparser.add_argument(
     '-c',
     '--classes_path',
-    help='path to classes file, defaults to aeryon_classes.txt',
-    default='model_data/aeryon_classes.txt')
+    help='path to classes file, defaults to drone_classes.txt',
+    default='model_data/drone_classes.txt')
 
 
 def _main(args):
@@ -55,8 +53,7 @@ def _main(args):
     classes_path = os.path.expanduser(args.classes_path)
     anchors_path = os.path.expanduser(args.anchors_path)
     class_names  = get_classes(classes_path)
-    print(anchors_path)
-    anchors = get_anchors(anchors_path)
+    anchors      = get_anchors(anchors_path)
 
     if SHRINK_FACTOR == 16:
         anchors = anchors *2
@@ -75,7 +72,7 @@ def _main(args):
     K.clear_session()
 
     model_body, model = create_model(anchors, class_names, 
-        feature_extractor=FEATURE_EXTRACTOR, load_pretrained=True, pretrained_path='weights/trained_stage_2_mobilenet_shallow_True_x0enabled_True.h5')
+        feature_extractor=FEATURE_EXTRACTOR, load_pretrained=True, pretrained_path=None)
 
     train_batch_gen = DataBatchGenerator(train_images, train_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=True)
     valid_batch_gen = DataBatchGenerator(valid_images, valid_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names)
@@ -85,29 +82,6 @@ def _main(args):
         anchors, 
         train_batch_gen,
         valid_batch_gen)
-
-def get_classes(classes_path):
-    '''loads the classes'''
-    with open(classes_path) as f:
-        class_names = f.readlines()
-    class_names = [c.strip() for c in class_names]
-    return class_names
-
-def get_anchors(anchors_path):
-    '''loads the anchors from a file'''
-    if os.path.isfile(anchors_path):
-        with open(anchors_path) as f:
-            anchors = f.readlines()
-            try:
-                anchors = [anchor.rstrip().split(',') for anchor in anchors]
-                anchors =  sum(anchors, [])
-                anchors = [float(x) for x in anchors]
-            except:
-                anchors = YOLO_ANCHORS
-            return np.array(anchors).reshape(-1, 2)
-    else:
-        Warning("Could not open anchors file, using default.")
-        return YOLO_ANCHORS
 
 class DataBatchGenerator:
     def __init__(self, H5_IMAGES, 
@@ -197,8 +171,8 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 1
-    weight_name = 'weights/trained_stage_1_best_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
+    num_epochs = 25
+    weight_name = 'weights/{}_s1_best.{}{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
 
     checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
@@ -209,7 +183,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
                         epochs          = num_epochs,
                         workers=1, 
                         verbose=1)
-    model.save_weights('weights/trained_stage_1_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
+    model.save_weights('weights/{}_s1.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
 
     adam = Adam(lr=0.0005, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
@@ -217,7 +191,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
             'yolo_loss': lambda y_true, y_pred: y_pred
         })  # This is a hack to use the custom loss function in the last layer.
 
-    weight_name = 'weights/trained_stage_2_best_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
+    weight_name = 'weights/{}_s2_best.{}{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
     checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),
@@ -228,15 +202,14 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
                         workers=1, 
                         verbose=1)
 
-    model.save_weights('weights/trained_stage_2_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
-
+    model.save_weights('weights/{}_s2.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
     adam = Adam(lr=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
         optimizer=adam, loss={
             'yolo_loss': lambda y_true, y_pred: y_pred
         })  
     
-    weight_name = 'weights/trained_stage_3_best_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
+    weight_name = 'weights/{}_s2_best.{}{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
     checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
     model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
                         validation_data = valid_batch_gen.flow_from_hdf5(),
@@ -246,8 +219,7 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
                         epochs          = num_epochs,
                         workers=1, 
                         verbose=1)
-    model.save_weights('weights/trained_stage_3_{}_shallow_{}_x0enabled_{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
-
+    model.save_weights('weights/{}_s3.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
 
 def draw(model_body, class_names, anchors, image_data, image_set='val',
             weights_name='trained_stage_3_best.h5', out_path="output_images", save_all=True):

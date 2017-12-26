@@ -22,12 +22,10 @@ from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobile
                                      yolo_eval, decode_yolo_output, yolo_loss, yolo_body_darknet)
 # from mobiledet.models.keras_darknet19 import darknet_feature_extractor
 from mobiledet.utils.draw_boxes import draw_boxes
+from mobiledet.utils.utils import get_anchors
+from mobiledet.utils.utils import get_classes
 
 from cfg import *
-
-YOLO_ANCHORS = np.array(
-    ((0.57273, 0.677385), (1.87446, 2.06253), (3.33843, 5.47434),
-     (7.88282, 3.52778), (9.77052, 9.16828)))
 
 argparser = argparse.ArgumentParser(
     description='Train YOLO_v2 model to overfit on a single image.')
@@ -41,54 +39,39 @@ argparser.add_argument(
 argparser.add_argument(
     '-a',
     '--anchors_path',
-    help='path to anchors file, defaults to yolo_anchors.txt',
-    default='model_data/aeryon_anchors.txt')
+    help='path to anchors file, defaults to pascal_anchors.txt',
+    default='model_data/drone_anchors.txt')
 
 argparser.add_argument(
     '-c',
     '--classes_path',
-    help='path to classes file, defaults to pascal_classes.txt',
-    default='model_data/aeryon_classes.txt')
+    help='path to classes file, defaults to drone_classes.txt',
+    default='model_data/drone_classes.txt')
 
-def get_anchors(anchors_path):
-    '''loads the anchors from a file'''
-    if os.path.isfile(anchors_path):
-        with open(anchors_path) as f:
-            anchors = f.readlines()
-            try:
-                anchors = [anchor.rstrip().split(',') for anchor in anchors]
-                anchors =  sum(anchors, [])
-                anchors = [float(x) for x in anchors]
-            except:
-                anchors = YOLO_ANCHORS
-            return np.array(anchors).reshape(-1, 2)
-    else:
-        Warning("Could not open anchors file, using default.")
-        return YOLO_ANCHORS
+argparser.add_argument(
+    '-n',
+    '--num_epoches',
+    help='num of epoches to overfit the image',
+    type=int,
+    default=1000)
+
 
 def _main(args):
     voc_path = os.path.expanduser(args.data_path)
     classes_path = os.path.expanduser(args.classes_path)
     anchors_path = os.path.expanduser(args.anchors_path)
-
-    with open(classes_path) as f:
-        class_names = f.readlines()
-    class_names = [c.strip() for c in class_names]
-
-    if os.path.isfile(anchors_path):
-        with open(anchors_path) as f:
-            anchors = f.readline()
-            anchors = [float(x) for x in anchors.split(',')]
-            anchors = np.array(anchors).reshape(-1, 2)
-    else:
-        anchors = YOLO_ANCHORS
-
+    class_names = get_classes(classes_path)
     anchors = get_anchors(anchors_path)
-    anchors = anchors*2
-    # anchors = YOLO_ANCHORS
+    num_epoches = args.num_epoches
+
+    if SHRINK_FACTOR == 16:
+        anchors = anchors * 2
 
     print('Prior anchor boxes:')    
     print(anchors)
+    print('Prior classes:')
+    print(class_names)
+
     num_anchors = len(anchors)
     voc = h5py.File(voc_path, 'r')
     
@@ -150,7 +133,7 @@ def _main(args):
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
     yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names), weights='imagenet', network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
-    yolo_model.summary()
+    # yolo_model.summary()
 
     # TODO: Replace Lambda with custom Keras layer for loss.
     model_loss = Lambda(
@@ -178,15 +161,13 @@ def _main(args):
     detectors_mask = np.expand_dims(detectors_mask, axis=0)
     matching_true_boxes = np.expand_dims(matching_true_boxes, axis=0)
 
-    num_steps = 1000
-
     model.fit([image_data, boxes, detectors_mask, matching_true_boxes],
               np.zeros(len(image_data)),
               batch_size=1,
               verbose=1,
-              epochs=num_steps)
+              epochs=num_epoches)
               
-    model.save_weights('model_data/trained_stage_1.h5')
+    model.save_weights('model_data/overfit.h5')
 
     # Create output variables for prediction.
     yolo_outputs = decode_yolo_output(yolo_model.output, anchors, len(class_names))
@@ -209,6 +190,7 @@ def _main(args):
     # Plot image with predicted boxes.
     image_with_boxes = draw_boxes(image_data[0], out_boxes, out_classes,
                                   class_names, out_scores)
+
     plt.imshow(image_with_boxes, interpolation='nearest')
     plt.show()
 

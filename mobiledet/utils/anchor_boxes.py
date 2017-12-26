@@ -1,41 +1,22 @@
 """
-This script creates a custom dataset for training and evaluation. It will generate:
-
-   + a CSV training file
-   + a CSV validation file (optional: if split is enabled)
-   + a categories text file to map indices to label names.
+This script generates anchor boxes for a custom dataset. It will generate:
    + an anchor text file (depending on number of anchors, default = 5)
-
-Requirement:
------------
-   + a text file, containing ground truths, in this following format:
-        /absolute_path/to/image , x1, y1, x2, y2, label
 
 Example usage:
 -------------
-python create_custom_dataset.py
- --path       /path/to/text_file.txt
- --output_dir ./dataset/my_new_dataset
- --num_anchors   5
- --split       True
-
-Return
-------
-  yolov2
-  |- dataset
-     | - my_new_data_set
-         | --  categories.txt
-         | --  anchors.txt
-         | --  training_data.csv
-         | --  testing_data.csv
+python anchor_boxes.py
+ --path       /path/to/dataset.hdf5
+ --output_dir ./
+ --num_anchors  5
 """
 import os
 import csv
 import numpy as np
-from PIL import Image
-from box import box_iou, Box
 import cv2, io
 import h5py
+from PIL import Image
+from cfg import *
+from box import box_iou, Box
 from argparse import ArgumentParser
 
 parser = ArgumentParser(description="Generate custom anchor boxes")
@@ -44,14 +25,11 @@ parser.add_argument('-i', '--input_hdf5',
                     help="Path to input hdf5 file", type=str, default=None)
 
 parser.add_argument('-o', '--output_dir',
-                    help="Path to output directory", type=str, default=None)
+                    help="Path to output directory", type=str, default='./')
 
 parser.add_argument('-n', '--number_anchors',
                     help="Number of anchors [default = 5]", type=int, default=5)
 
-
-SHRINK_FACTOR = 16
-IMG_INPUT_SIZE = 608
 
 def hdf5_read_image_boxes(data_images, data_boxes, idx):  
     image = data_images[idx]
@@ -73,8 +51,6 @@ def main():
     # #################################
     train_boxes = np.array(h5_data['train/boxes'])
     train_images = np.array(h5_data['train/images'])
-    valid_boxes = np.array(h5_data['valid/boxes'])
-    valid_images = np.array(h5_data['valid/images'])
 
     gt_boxes = []
     print("Calculating Anchors using K-mean Clustering....")
@@ -91,9 +67,9 @@ def main():
         boxes = np.concatenate((boxes_xy, boxes_wh), axis=1)
         for box in boxes:
             xc, yc, w, h = box[0], box[1], box[2], box[3]
-            aspect_ratio = [IMG_INPUT_SIZE / float(img_width), IMG_INPUT_SIZE / float(img_height)]
-            feature_width = float(w) * aspect_ratio[0] / SHRINK_FACTOR
-            feature_height = float(h) * aspect_ratio[1] / SHRINK_FACTOR
+            aspect_ratio = [IMAGE_W / float(img_width), IMAGE_H / float(img_height)]
+            feature_width = float(w) * aspect_ratio[0] / 32
+            feature_height = float(h) * aspect_ratio[1] / 32
             if feature_width < 1 and feature_height < 1:
                 n_small += 1
             box = Box(0, 0, feature_width, feature_height)
