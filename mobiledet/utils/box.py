@@ -1,11 +1,26 @@
 import numpy as np
 
 class Box(object):
-    def __init__(self, xc, yc, w, h):
+    def __init__(self, xc, yc, w, h, c=None, classes=None):
         self.x = xc
         self.y = yc
         self.w = w
         self.h = h
+
+    def get_label(self):
+        if self.label == -1:
+            self.label = np.argmax(self.classes)
+        return self.label
+
+    def get_score(self):
+        if self.score == -1:
+            self.score = self.classes[self.get_label()]
+        return self.score
+        self.label = -1
+        self.score = -1
+
+    def to_array(self):
+        return np.array([self.x, self.y, self.w, self.h, int(self.get_label())])
 
     def to_opencv_format(self):
         """
@@ -50,8 +65,7 @@ class Box(object):
         self.h  = self.h   * height
         return self.x, self.y, self.w, self.h
 
-    def to_array(self):
-        return np.array((self.x, self.y, self.w, self.h))
+
 
     def __str__(self):
         return "{}, {}, {}, {}".format(self.x, self.y, self.w, self.h)
@@ -112,27 +126,3 @@ def scale_rel_box(img_size, box):
     h  = box.h * dh
     return xc, yc, w, h
 
-
-def build_box_from_pd(bbox):
-    """
-    :param bbox: a single panda data frames
-    :return: 
-    """
-    x = bbox.loc['Upper left corner X']
-    y = bbox.loc['Upper left corner Y']
-    w = bbox.loc['Lower right corner X'] - bbox.loc['Upper left corner X']
-    h = bbox.loc['Lower right corner Y'] - bbox.loc['Upper left corner Y']
-    xc = x + w/2
-    yc = y + h/2
-
-    return Box(xc, yc, w, h)
-
-# # TEST CASE ##
-if __name__ == "__main__":
-    b1 = Box(1, 1, 3, 3)
-    b2 = Box(1, 1, 3, 3)
-    b1 = Box(1, 1, 3, 3)
-    b2 = Box(1, 1, 3, 3)
-    print("Box Intersection: ", box_intersection(b1, b2))
-    print("Box Union:        ", box_union(b1, b2))
-    print("Box IOU:          ", box_iou(b1, b2))

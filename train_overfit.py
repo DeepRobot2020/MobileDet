@@ -34,7 +34,7 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help='path to HDF5 file containing pascal voc dataset',
-    default='~/data/PascalVOC/VOCdevkit/pascal_voc_07_12_person_vehicle.hdf5')
+    default='~/data/pascal_voc_07_12_person_vehicle.hdf5')
 
 argparser.add_argument(
     '-a',

@@ -6,6 +6,7 @@ import imghdr
 import os
 import os.path as osp
 import random
+import h5py
 
 import numpy as np
 from keras.models import load_model
@@ -21,6 +22,8 @@ from keras.optimizers import Adam
 from mobiledet.models.keras_yolo import preprocess_true_boxes
 from mobiledet.models.keras_yolo import yolo_eval, yolo_loss, decode_yolo_output, create_model
 from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet                     
+from mobiledet.models.keras_yolo import recall_precision
+
 
 from mobiledet.utils.draw_boxes import draw_boxes
 
@@ -39,7 +42,6 @@ import os
 import tensorflow as tf
 from tensorflow.python.tools.freeze_graph import freeze_graph
 
-import pdb;
 import time
 
 parser = argparse.ArgumentParser(
@@ -52,13 +54,13 @@ parser.add_argument(
 parser.add_argument(
     '-a',
     '--anchors_path',
-    help='path to anchors file, defaults to yolo_anchors.txt',
-    default='model_data/aeryon_anchors.txt')
+    help='path to anchors file, defaults to pascal_anchors.txt',
+    default='model_data/pascal_anchors.txt')
 parser.add_argument(
     '-c',
     '--classes_path',
-    help='path to classes file, defaults to coco_classes.txt',
-    default='model_data/aeryon_classes.txt')
+    help='path to classes file, defaults to drone_classes.txt',
+    default='model_data/drone_classes.txt')
 parser.add_argument(
     '-t',
     '--test_path',
@@ -133,12 +135,18 @@ def _main(args):
     test_path = os.path.expanduser(args.test_path)
     output_path = os.path.expanduser(args.output_path)
 
+    data_path = '~/data/pascal_voc_07_12_person_vehicle.hdf5'
+    data_path = os.path.expanduser(data_path)
+    voc = h5py.File(data_path, 'r')
+    
+
     if not os.path.exists(output_path):
         print('Creating output path {}'.format(output_path))
         os.mkdir(output_path)
 
     class_names  = get_classes(classes_path)
     anchors = get_anchors(anchors_path)
+    anchors = YOLO_ANCHORS
     if SHALLOW_DETECTOR:
         anchors = anchors * 2
 
@@ -148,6 +156,8 @@ def _main(args):
     yolo_model, _ = create_model(anchors, class_names, load_pretrained=True, 
         feature_extractor=FEATURE_EXTRACTOR, pretrained_path=model_path)
 
+    # recall_precision(voc, yolo_model, anchors, class_names)
+    # return
     # plot_model(yolo_model, to_file='model.png')
 
     model_file_basename, file_extension = os.path.splitext(os.path.basename(model_path))
@@ -174,7 +184,6 @@ def _main(args):
 
     # Check if model is fully convolutional, assuming channel last order.
     model_image_size = yolo_model.layers[0].input_shape[1:3]
-    is_fixed_size = model_image_size != (None, None)
 
     # Generate colors for drawing bounding boxes.
     hsv_tuples = [(x / len(class_names), 1., 1.)
@@ -190,7 +199,6 @@ def _main(args):
     sess = K.get_session()  # TODO: Remove dependence on Tensorflow session.
 
     # Generate output tensor targets for filtered bounding boxes.
-    # TODO: Wrap these backend operations with Keras layers.
     yolo_outputs = decode_yolo_output(yolo_model.output, anchors, len(class_names))
     input_image_shape = K.placeholder(shape=(2, ))
     boxes, scores, classes = yolo_eval(
@@ -201,6 +209,7 @@ def _main(args):
 
     image_files = sorted(os.listdir(test_path))
     for idx in range(len(image_files)):
+        
         image_file = image_files[idx]
         try:
             image_type = imghdr.what(os.path.join(test_path, image_file))
@@ -210,18 +219,10 @@ def _main(args):
             continue
 
         image = Image.open(os.path.join(test_path, image_file))
-        if is_fixed_size:  # TODO: When resizing we can use minibatch input.
-            resized_image = image.resize(
-                tuple(reversed(model_image_size)), Image.BICUBIC)
-            image_data = np.array(resized_image, dtype='float32')
-        else:
-            # Due to skip connection + max pooling in YOLO_v2, inputs must have
-            # width and height as multiples of 32.
-            new_image_size = (image.width - (image.width % 32),
-                              image.height - (image.height % 32))
-            resized_image = image.resize(new_image_size, Image.BICUBIC)
-            image_data = np.array(resized_image, dtype='float32')
-            print(image_data.shape)
+        resized_image = image.resize(
+            tuple(reversed(model_image_size)), Image.BICUBIC)
+        image_data = np.array(resized_image, dtype='float32')
+
 
         image_data /= 255.
         image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
@@ -235,7 +236,6 @@ def _main(args):
             })
         last = (time.time() - start)
         print('Found {} boxes for {}'.format(len(out_boxes), image_file))        
-        print('Found {} boxes for {}'.format(len(out_boxes), image_file))
 
         font = ImageFont.truetype(
             font='font/FiraMono-Medium.otf',
@@ -246,7 +246,6 @@ def _main(args):
             predicted_class = class_names[c]
             box = out_boxes[i]
             score = out_scores[i]
-
             label = '{} {:.2f}'.format(predicted_class, score)
 
             draw = ImageDraw.Draw(image)

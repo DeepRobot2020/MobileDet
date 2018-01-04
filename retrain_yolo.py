@@ -16,7 +16,7 @@ from keras.layers import Input, Lambda, Conv2D
 from keras.models import load_model, Model
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
 from keras.optimizers import Adam
-from mobiledet.models.keras_yolo import preprocess_true_boxes, yolo_eval, yolo_loss
+from mobiledet.models.keras_yolo import preprocess_true_boxes, yolo_loss
 from mobiledet.models.keras_yolo import yolo_eval, yolo_loss, decode_yolo_output, create_model
 from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet
 from mobiledet.models.keras_yolo import yolo_get_detector_mask
@@ -48,6 +48,7 @@ argparser.add_argument(
     default='model_data/drone_classes.txt')
 
 
+
 def _main(args):
     data_path    = os.path.expanduser(args.data_path)
     classes_path = os.path.expanduser(args.classes_path)
@@ -55,6 +56,7 @@ def _main(args):
     class_names  = get_classes(classes_path)
     anchors      = get_anchors(anchors_path)
 
+    anchors = YOLO_ANCHORS
     if SHRINK_FACTOR == 16:
         anchors = anchors *2
     print('Anchors:')
@@ -72,10 +74,10 @@ def _main(args):
     K.clear_session()
 
     model_body, model = create_model(anchors, class_names, 
-        feature_extractor=FEATURE_EXTRACTOR, load_pretrained=True, pretrained_path=None)
+        feature_extractor=FEATURE_EXTRACTOR, load_pretrained=True, pretrained_path='/home/jzhang/github/MobileDet/weights/darknet19_s2_best.FalseFalse.h5')
 
     train_batch_gen = DataBatchGenerator(train_images, train_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=True)
-    valid_batch_gen = DataBatchGenerator(valid_images, valid_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names)
+    valid_batch_gen = DataBatchGenerator(valid_images, valid_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=True)
     train(
         model,
         class_names,
@@ -145,7 +147,7 @@ class DataBatchGenerator:
             X_train = [batch_images, batch_boxes, detectors_mask, matching_true_boxes]
             y_train = np.zeros(len(batch_images))
             yield X_train, y_train
-    
+                
 
 def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validation_split=0.1):
     '''
@@ -237,7 +239,7 @@ def draw(model_body, class_names, anchors, image_data, image_set='val',
             for image in image_data])
     else:
         ValueError("draw argument image_set must be 'train', 'val', or 'all'")
-    # model.load_weights(weights_name)
+
     print(image_data.shape)
     model_body.load_weights(weights_name)
 
@@ -247,7 +249,7 @@ def draw(model_body, class_names, anchors, image_data, image_set='val',
     boxes, scores, classes = yolo_eval(
         yolo_outputs, input_image_shape, score_threshold=0.07, iou_threshold=0)
 
-    # Run prediction on overfit image.
+    # Run prediction
     sess = K.get_session()  # TODO: Remove dependence on Tensorflow session.
 
     if  not os.path.exists(out_path):
