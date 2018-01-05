@@ -20,6 +20,8 @@ from mobiledet.models.keras_yolo import preprocess_true_boxes, yolo_loss
 from mobiledet.models.keras_yolo import yolo_eval, yolo_loss, decode_yolo_output, create_model
 from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet
 from mobiledet.models.keras_yolo import yolo_get_detector_mask
+from mobiledet.models.keras_yolo import recall_precision
+
 from mobiledet.utils.draw_boxes import draw_boxes
 
 from mobiledet.utils import *
@@ -74,11 +76,12 @@ def _main(args):
     K.clear_session()
 
     model_body, model = create_model(anchors, class_names, 
-        feature_extractor=FEATURE_EXTRACTOR, load_pretrained=True, pretrained_path='/home/jzhang/github/MobileDet/weights/darknet19_s2_best.FalseFalse.h5')
+        feature_extractor=FEATURE_EXTRACTOR, load_pretrained=True, pretrained_path='/mnt/data/github/MobileDet/weights.mobilenet.2/mobilenet_s1_best.TrueTrue.h5')
 
     train_batch_gen = DataBatchGenerator(train_images, train_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=True)
     valid_batch_gen = DataBatchGenerator(valid_images, valid_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=True)
     train(
+        model_body,
         model,
         class_names,
         anchors, 
@@ -149,7 +152,7 @@ class DataBatchGenerator:
             yield X_train, y_train
                 
 
-def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validation_split=0.1):
+def train(model_body, model, class_names, anchors, train_batch_gen, valid_batch_gen, validation_split=0.1):
     '''
     retrain/fine-tune the model
 
@@ -173,19 +176,22 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 25
-    weight_name = 'weights/{}_s1_best.{}{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
+    num_epochs = 20
+    freq_recall_precision = 5
 
+    weight_name = 'weights/{}_s1_best.{}{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
     checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
-    model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
-                        validation_data = valid_batch_gen.flow_from_hdf5(),
-                        steps_per_epoch = train_steps_per_epoch,
-                        validation_steps= valid_steps_per_epoch,
-                        callbacks       = [checkpoint, logging],
-                        epochs          = num_epochs,
-                        workers=1, 
-                        verbose=1)
-    model.save_weights('weights/{}_s1.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
+    for lp in range(num_epochs//freq_recall_precision):
+        model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
+                            validation_data = valid_batch_gen.flow_from_hdf5(),
+                            steps_per_epoch = train_steps_per_epoch,
+                            validation_steps= valid_steps_per_epoch,
+                            callbacks       = [checkpoint, logging],
+                            epochs          = freq_recall_precision,
+                            workers=1, 
+                            verbose=1)
+        model.save_weights('weights/{}_s1.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
+        recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)
 
     adam = Adam(lr=0.0005, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
@@ -195,33 +201,39 @@ def train(model, class_names, anchors, train_batch_gen, valid_batch_gen, validat
 
     weight_name = 'weights/{}_s2_best.{}{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
     checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
-    model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
-                        validation_data = valid_batch_gen.flow_from_hdf5(),
-                        steps_per_epoch = train_steps_per_epoch,
-                        validation_steps= valid_steps_per_epoch,
-                        callbacks       = [checkpoint, logging],
-                        epochs          = num_epochs,
-                        workers=1, 
-                        verbose=1)
 
-    model.save_weights('weights/{}_s2.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
+    for lp in range(num_epochs//freq_recall_precision):
+        model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
+                            validation_data = valid_batch_gen.flow_from_hdf5(),
+                            steps_per_epoch = train_steps_per_epoch,
+                            validation_steps= valid_steps_per_epoch,
+                            callbacks       = [checkpoint, logging],
+                            epochs          = freq_recall_precision,
+                            workers=1, 
+                            verbose=1)
+        model.save_weights('weights/{}_s2.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
+        recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)
+
     adam = Adam(lr=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
         optimizer=adam, loss={
             'yolo_loss': lambda y_true, y_pred: y_pred
         })  
     
-    weight_name = 'weights/{}_s2_best.{}{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
+    weight_name = 'weights/{}_s3_best.{}{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
     checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
-    model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
-                        validation_data = valid_batch_gen.flow_from_hdf5(),
-                        steps_per_epoch = train_steps_per_epoch,
-                        validation_steps= valid_steps_per_epoch,
-                        callbacks       = [checkpoint, logging],
-                        epochs          = num_epochs,
-                        workers=1, 
-                        verbose=1)
-    model.save_weights('weights/{}_s3.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
+    for lp in range(num_epochs//freq_recall_precision):     
+        model.fit_generator(generator       = train_batch_gen.flow_from_hdf5(),
+                            validation_data = valid_batch_gen.flow_from_hdf5(),
+                            steps_per_epoch = train_steps_per_epoch,
+                            validation_steps= valid_steps_per_epoch,
+                            callbacks       = [checkpoint, logging],
+                            epochs          = freq_recall_precision,
+                            workers=1, 
+                            verbose=1)
+        model.save_weights('weights/{}_s3.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
+        recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)
+
 
 def draw(model_body, class_names, anchors, image_data, image_set='val',
             weights_name='trained_stage_3_best.h5', out_path="output_images", save_all=True):

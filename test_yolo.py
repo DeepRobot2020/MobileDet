@@ -76,13 +76,20 @@ parser.add_argument(
     '--score_threshold',
     type=float,
     help='threshold for bounding box scores, default .6',
-    default=.6)
+    default=.3)
 parser.add_argument(
     '-iou',
     '--iou_threshold',
     type=float,
-    help='threshold for non max suppression IOU, default .3',
-    default=.6)
+    help='threshold for non max suppression IOU, default .5',
+    default=.3)
+
+parser.add_argument(
+    '-rp',
+    '--calculate_precision_recall',
+    type=float,
+    help='Calculate precision and recall',
+    default=True)
 
 parser.add_argument(
     '-tf',
@@ -156,8 +163,8 @@ def _main(args):
     yolo_model, _ = create_model(anchors, class_names, load_pretrained=True, 
         feature_extractor=FEATURE_EXTRACTOR, pretrained_path=model_path)
 
-    # recall_precision(voc, yolo_model, anchors, class_names)
-    # return
+    recall_precision(np.array(voc['train/images']), np.array(voc['train/boxes']), yolo_model, anchors, class_names)
+    return
     # plot_model(yolo_model, to_file='model.png')
 
     model_file_basename, file_extension = os.path.splitext(os.path.basename(model_path))

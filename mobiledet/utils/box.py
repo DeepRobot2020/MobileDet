@@ -1,11 +1,14 @@
 import numpy as np
 
 class Box(object):
-    def __init__(self, xc, yc, w, h, c=None, classes=None):
+    def __init__(self, xc, yc, w, h, c=None, label=None, classes=None):
         self.x = xc
         self.y = yc
         self.w = w
         self.h = h
+        self.c = c    
+        self.label = label
+        self.classes = None
 
     def get_label(self):
         if self.label == -1:
@@ -13,11 +16,9 @@ class Box(object):
         return self.label
 
     def get_score(self):
-        if self.score == -1:
-            self.score = self.classes[self.get_label()]
-        return self.score
-        self.label = -1
-        self.score = -1
+        if self.c == -1:
+            self.c = self.classes[self.get_label()]
+        return self.c
 
     def to_array(self):
         return np.array([self.x, self.y, self.w, self.h, int(self.get_label())])
@@ -66,9 +67,8 @@ class Box(object):
         return self.x, self.y, self.w, self.h
 
 
-
     def __str__(self):
-        return "{}, {}, {}, {}".format(self.x, self.y, self.w, self.h)
+        return "{}, {}, {}, {}".format(round(self.x, 2), round(self.y, 2), round(self.w, 2), round(self.h, 2))
 
     def __repr__(self):
         return str(self)

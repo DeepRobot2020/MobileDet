@@ -79,8 +79,6 @@ def read_voc_datasets_train_batch(data_images, data_boxes):
     batch_boxes = data_boxes[idx]
     batch_boxes = batch_boxes.reshape((-1, 5))    
     image = PIL.Image.open(io.BytesIO(batch_image))
-    orig_size = np.array([image.width, image.height])
-    orig_size = np.expand_dims(orig_size, axis=0)
     image_data = np.array(image, dtype=np.float)           
     return np.array(image_data), np.array(batch_boxes)
 

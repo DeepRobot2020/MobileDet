@@ -5,7 +5,7 @@ Modify every time one would like to train on a new dataset
 import numpy as np
 
 # If a feature extractor performed 5 max-pooling --> Image resolution being reduced 2^5 = 32 times
-# Most current state-of-the-art models have max-pooling layers (August, 2017)
+# Most current state-of-the-art models have max-pooling layers (Jan, 2018)
 # FEATURE_EXTRACTOR = 'darknet19'
 FEATURE_EXTRACTOR = 'mobilenet'
 N_CLASSES         = 2

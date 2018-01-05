@@ -650,111 +650,65 @@ def create_model(anchors, class_names, feature_extractor='darknet19',
     return model_body, model
 
 
-def get_recall_precision(bboxes_pred, bboxes_gt, classes, iou_threshold=0.4):
-    num_classes = len(classes)
-    classes_detection_results = dict.fromkeys(range(num_classes))  # label_id : TP, FP, FN
-    for key, value in classes_detection_results.items():
-        classes_detection_results[key] = [0, 0, 0]  # TP, FP, FN
+def get_recall_precision(bboxes_pred, bboxes_gt, num_classes, iou_threshold=0.4):
+    detection_results = dict.fromkeys(range(num_classes))  # label_id : TP, FP, FN
+
+    for key, value in detection_results.items():
+        detection_results[key] = np.zeros(3, dtype=np.int)  # TP, FP, FN
     # calculate TP (true positive) and FP (False Positive)
     for bp in bboxes_pred:
         for i in range(len(bboxes_gt)):
             bg = bboxes_gt[i]
             iou_matched = box_iou(bp, bg) > iou_threshold
             label_matched = (bp.get_label() == bg.get_label())
-    
+            # This is a True Positive
             if iou_matched and label_matched and bg.c > 0.0 and bp.c > 0.0:
-                classes_detection_results[bp.get_label()][0] += 1
+                detection_results[bp.get_label()][0] += 1
                 bg.c = 0.0
                 bp.c = 0.0
+        # This is a False Positive
         if bp.c > 0.0:
-            classes_detection_results[bp.get_label()][1] += 1
-    # pdb.set_trace()
+            detection_results[bp.get_label()][1] += 1
+    # This is False Negative
     for bg in bboxes_gt:
         if bg.c > 0.0:
-            classes_detection_results[bg.get_label()][2] += 1
-    # Now calculate Precision and Recall for each classes
-    result = []
-    for key, value in classes_detection_results.items():
-        prec = value[0] / float(value[0] + value[1] + 0.00001)
-        recall = value[0] / float(value[0] + value[2] + 0.00001)
-        result.append((key, prec, recall))
-        # print(classes[key], 'True Positive:', value[0],
-        #       'False Positive:', value[1], 'False Negative:', value[2])
-        print(classes[key], 'precision:', prec, 'recall:', recall)
-    return result
+            detection_results[bg.get_label()][2] += 1
+    return detection_results
 
 
-def recall_precision(hdf5_data, yolo_model, anchors, class_names, weights=None, image_set='valid', num_samples=1024):
-    # assert(os.path.exists(weights))
-    total_samples = hdf5_data[image_set + '/images'].shape[0]
-    sample_list = np.random.choice(total_samples, num_samples, replace=False)
-
-    hdf5_images = hdf5_data[image_set + '/images']
-    hdf5_boxes = hdf5_data[image_set + '/boxes']
+def recall_precision(hdf5_images, hdf5_boxes, yolo_model, anchors, class_names, num_samples=1024, score_threshold=0.3, iou_threshold=0.3):
+    n_samples = hdf5_images.shape[0]
+    sample_list = np.random.choice(n_samples, num_samples, replace=False)
 
     x_batch = np.zeros((num_samples, IMAGE_H, IMAGE_W, 3))
-    box_batch = []
-    # for sample_id in sample_list:
-    #     boxes = hdf5_boxes[sample_id]
-    #     boxes = boxes.reshape((-1, 5))
-
-    #     # Get box parameters as x_center, y_center, box_width, box_height, class.
-    #     boxes_xy = 0.5 * (boxes[:, 3:5] + boxes[:, 1:3])
-    #     boxes_wh = boxes[:, 3:5] - boxes[:, 1:3]
-    #     boxes_xy = boxes_xy / orig_size
-    #     boxes_wh = boxes_wh / orig_size
-    #     boxes = np.concatenate((boxes_xy, boxes_wh, boxes[:, 0:1]), axis=1)
-    #     cur_boxes = []
-    #     for box in boxes:
-    #         label = int(box[-1])
-    #         one_hot = np.eye(N_CLASSES)[label]
-    #         xc, yc, w, h = box[0:4]
-    #         cur_boxes.append(Box(xc, yc, w, h, c=1.0, classes=one_hot))
-    #     box_batch.append(cur_boxes)
+    y_batch = []
+    y_pred  = []
 
     # Create output variables for prediction.
-    # yolo_model.load_weights(weights)yolo_model
     yolo_outputs = decode_yolo_output(yolo_model.output, anchors, N_CLASSES)
     input_image_shape = K.placeholder(shape=(2, ))
     boxes, scores, classes = yolo_eval(
-        yolo_outputs, input_image_shape, score_threshold=0.07, iou_threshold=0)
+        yolo_outputs, input_image_shape, score_threshold=score_threshold, iou_threshold=iou_threshold)
 
     # Run prediction
     sess = K.get_session()  # TODO: Remove dependence on Tensorflow session.
 
+    person_results  = np.zeros(3, dtype=np.int)
+    vehicle_results = np.zeros(3, dtype=np.int)
 
-    cur_id = 0
-    for sample_id in sample_list:
+    for cur_id in sample_list:
         # Original boxes stored as 1D list of class, x_min, y_min, x_max, y_max.
-        image = PIL.Image.open(io.BytesIO(hdf5_images[sample_id]))
+        image = PIL.Image.open(io.BytesIO(hdf5_images[cur_id]))
         orig_size = np.array([image.width, image.height])
         orig_size = np.expand_dims(orig_size, axis=0)
-        boxes = hdf5_boxes[sample_id]
-        boxes = boxes.reshape((-1, 5))
-
-        # Get box parameters as x_center, y_center, box_width, box_height, class.
-        boxes_xy = 0.5 * (boxes[:, 3:5] + boxes[:, 1:3])
-        boxes_wh = boxes[:, 3:5] - boxes[:, 1:3]
-        boxes_xy = boxes_xy / orig_size
-        boxes_wh = boxes_wh / orig_size
-        boxes = np.concatenate((boxes_xy, boxes_wh, boxes[:, 0:1]), axis=1)
-        cur_boxes = []
-        for box in boxes:
-            label = int(box[-1])
-            one_hot = np.eye(N_CLASSES)[label]
-            xc, yc, w, h = box[0:4]
-            cur_boxes.append(Box(xc, yc, w, h, c=1.0, classes=one_hot))
-        box_batch.append(cur_boxes)
-
-
 
         image = image.resize(
             (IMAGE_W, IMAGE_H), PIL.Image.BICUBIC)
+
         image_data = np.array(image, dtype=np.float)
         image_data /= 255.
-        x_batch[cur_id] = image_data
-
         image_data = np.expand_dims(image_data, axis=0)
+        
         out_boxes, out_scores, out_classes = sess.run(
             [boxes, scores, classes],
             feed_dict={
@@ -762,63 +716,60 @@ def recall_precision(hdf5_data, yolo_model, anchors, class_names, weights=None, 
                 input_image_shape: [image.size[1], image.size[0]],
                 K.learning_phase(): 0
             })
-
+        # store the predicted bounding box for recall/precision calculations
+        pred_Boxes = []
         for i, c in reversed(list(enumerate(out_classes))):
             predicted_class = class_names[c]
             box = out_boxes[i]
             score = out_scores[i]
             label = '{} {:.2f}'.format(predicted_class, score)
+            y0, x0, y1, x1 = box
+            x0 = max(0, np.floor(x0 + 0.5).astype('int32'))
+            y0 = max(0, np.floor(y0 + 0.5).astype('int32'))
+            x1 = min(image.size[0], np.floor(x1 + 0.5).astype('int32'))
+            y1 = min(image.size[1], np.floor(y1 + 0.5).astype('int32'))
 
-            draw = ImageDraw.Draw(image)
-            label_size = draw.textsize(label, font)
+            xc = 0.5 * (x0 + x1) / float(image.size[0])
+            yc = 0.5 * (y0 + y1) / float(image.size[1])
+            w  = (x1 - x0) / float(image.size[0])
+            h  = (y1 - y0) / float(image.size[1])
+            pred_Boxes.append(Box(xc, yc, w, h, c=score, label=c))
+            # print('cur_id', cur_id, 'Pred:', Box(xc, yc, w, h, c=score, label=c))
+        y_pred.append(pred_Boxes)
 
-            top, left, bottom, right = box
-            top = max(0, np.floor(top + 0.5).astype('int32'))
-            left = max(0, np.floor(left + 0.5).astype('int32'))
-            bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
-            right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
-            print(label, (left, top), (right, bottom))
+        # Extract the ground truth boxes
+        cur_boxes = hdf5_boxes[cur_id]
+        cur_boxes = cur_boxes.reshape((-1, 5))
 
-    # box_pred = []
-    # for i in range(num_samples):
-    #     img_data = x_batch[i]
-    #     img_data = np.expand_dims(img_data, axis=0)
-    #     out_boxes, out_scores, out_classes = sess.run(
-    #         [boxes, scores, classes],
-    #         feed_dict={
-    #             yolo_model.input: img_data,
-    #             input_image_shape: [x_batch.shape[2], x_batch.shape[3]],
-    #             K.learning_phase(): 0
-    #         })
+        # Get box parameters as x_center, y_center, box_width, box_height, class.
+        boxes_xy = 0.5 * (cur_boxes[:, 3:5] + cur_boxes[:, 1:3])
+        boxes_wh = cur_boxes[:, 3:5] - cur_boxes[:, 1:3]
+        boxes_xy = boxes_xy / orig_size
+        boxes_wh = boxes_wh / orig_size
+        cur_boxes = np.concatenate((boxes_xy, boxes_wh, cur_boxes[:, 0:1]), axis=1)
+
+        gt_Boxes = []
+        for box in cur_boxes:
+            label = int(box[-1])
+            xc, yc, w, h = box[0:4]
+            gt_Boxes.append(Box(xc, yc, w, h, c=1.0, label=label))
+            # print('cur_id', cur_id,'GT:', Box(xc, yc, w, h, c=1.0, label=label))
         
-        # boxes_yx = 0.5 * (out_boxes[:, 2:4] + out_boxes[:, 0:2])
-        # boxes_hw = out_boxes[:, 2:4] - out_boxes[:, 0:2]
-        # import pdb; pdb.set_trace()
-        # out_boxes = K.concatenate([
-        #             boxes_yx[..., 1:2], # xc
-        #             boxes_yx[..., 0:1], # yc
-        #             boxes_hw[..., 1:2], # w
-        #             boxes_hw[..., 0:1]  # h
-        #             ])
+        r = get_recall_precision(pred_Boxes, gt_Boxes, 2, 0.5)
+        person_results  += r[0]
+        vehicle_results += r[1]
+        # print(r)
+        y_batch.append(gt_Boxes)
 
-        # cur_boxes = []
-        # for j, c in list(enumerate(out_classes)):
-        #     predicted_class = class_names[c]
-        #     score = out_scores[j]
-        #     label = '{} {:.2f}'.format(predicted_class, score)
-        #     box = out_boxes[j]
-        #     top, left, bottom, right = box
-        #     top = max(0, np.floor(top + 0.5).astype('int32'))
-        #     left = max(0, np.floor(left + 0.5).astype('int32'))
+    person_presision =  person_results[0] / (person_results[0] + person_results[1])
+    person_recall =  person_results[0] / (person_results[0] + person_results[2])
+    
+    vehicle_presision =  vehicle_results[0] / (vehicle_results[0] + vehicle_results[1])
+    vehicle_recall =  vehicle_results[0] / (vehicle_results[0] + vehicle_results[2])
 
-        #     bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
-        #     right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
-        #     print(label, (left, top), (right, bottom))
+    print('person','recall', person_recall, 'prec', person_presision)
+    print('vehicle','recall', vehicle_recall, 'prec', vehicle_presision)
+    
 
-    #         xc, yc, w, h = out_boxes[j]
-    #         one_hot = np.eye(N_CLASSES)[c]
-    #         cur_boxes.append(Box(xc, yc, w, h, c=out_scores[j], classes=one_hot))
-    #     box_pred.append(cur_boxes)
 
-    # for i in range(num_samples):
-    #     get_recall_precision(box_pred[i], box_batch[i], class_names)
+
