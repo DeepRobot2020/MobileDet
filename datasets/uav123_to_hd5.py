@@ -176,7 +176,7 @@ def select_object_detection_images(list_videos, list_annos, list_folders, select
         with open(label_name, 'r') as f:
             img_idxs = [line.rstrip() for line in f]
         selected_images[video_file] = img_idxs
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
 
     for i in range(len(list_folders)):
         if list_folders[i] not in selected_images:
@@ -193,6 +193,7 @@ def select_object_detection_images(list_videos, list_annos, list_folders, select
                 continue
             video.append(raw_video[j])
             anns.append(raw_anns[j])
+        print('Adding folder', list_folders[i], len(video))
         out_images.append(video)
         out_annos.append(np.array(anns))
         out_folders.append(list_folders[i])

@@ -53,41 +53,42 @@ def main():
     train_images = np.array(h5_data['train/images'])
 
     gt_boxes = []
-    print("Calculating Anchors using K-mean Clustering....")
     n_small = 0
-    for i in range(train_images.shape[0]):
-        img, boxes = hdf5_read_image_boxes(train_images, train_boxes, i)
-        img_height, img_width = img.shape[:2]
-        orig_size = np.array([img_width, img_height], dtype=np.float)
-        orig_size = np.expand_dims(orig_size, axis=0)
-        boxes_xy = 0.5 * (boxes[:, 3:5] + boxes[:, 1:3])
-        boxes_wh = boxes[:, 3:5] - boxes[:, 1:3]
-        # boxes_xy = boxes_xy / orig_size
-        # boxes_wh = boxes_wh / orig_size
-        boxes = np.concatenate((boxes_xy, boxes_wh), axis=1)
-        for box in boxes:
-            xc, yc, w, h = box[0], box[1], box[2], box[3]
-            aspect_ratio = [IMAGE_W / float(img_width), IMAGE_H / float(img_height)]
-            feature_width = float(w) * aspect_ratio[0] / 32
-            feature_height = float(h) * aspect_ratio[1] / 32
-            if feature_width < 1 and feature_height < 1:
-                n_small += 1
-            box = Box(0, 0, feature_width, feature_height)
-            gt_boxes.append(box)
-    print('Total boxes: ' + str(len(gt_boxes)))
-    print('Total small: ' + str(n_small))
+    average_iou = []
+    print("Calculating Anchors using K-mean Clustering....")
+    for number_anchors in range(2, 16):
+        for i in range(train_images.shape[0]):
+            img, boxes = hdf5_read_image_boxes(train_images, train_boxes, i)
+            img_height, img_width = img.shape[:2]
+            orig_size = np.array([img_width, img_height], dtype=np.float)
+            orig_size = np.expand_dims(orig_size, axis=0)
+            boxes_xy = 0.5 * (boxes[:, 3:5] + boxes[:, 1:3])
+            boxes_wh = boxes[:, 3:5] - boxes[:, 1:3]
+            # boxes_xy = boxes_xy / orig_size
+            # boxes_wh = boxes_wh / orig_size
+            boxes = np.concatenate((boxes_xy, boxes_wh), axis=1)
+            for box in boxes:
+                xc, yc, w, h = box[0], box[1], box[2], box[3]
+                aspect_ratio = [IMAGE_W / float(img_width), IMAGE_H / float(img_height)]
+                feature_width = float(w) * aspect_ratio[0] / 32
+                feature_height = float(h) * aspect_ratio[1] / 32
+                if feature_width < 1 and feature_height < 1:
+                    n_small += 1
+                box = Box(0, 0, feature_width, feature_height)
+                gt_boxes.append(box)
+        print('Total boxes: ' + str(len(gt_boxes)))
+        print('Total small: ' + str(n_small))
 
-    anchors, avg_iou = k_mean_cluster(number_anchors, gt_boxes)
-    print("Number of anchors: {:2} | Average IoU:{:-4f}\n\n ".format(number_anchors, avg_iou))
-    anchors_file = os.path.join(output_dir, 'anchors.txt')
-
-    if not os.path.isdir(output_dir):
-        os.mkdir(output_dir)
-    with open(anchors_file, 'w') as f:
-        for anchor in anchors:
-            f.write("({:5f}, {:5f})\n".format(anchor.w, anchor.h))
-    print('Done')
-
+        anchors, avg_iou = k_mean_cluster(number_anchors, gt_boxes)
+        print("Number of anchors: {:2} | Average IoU:{:-4f}\n\n ".format(number_anchors, avg_iou))
+        anchors_file = os.path.join(output_dir, str(number_anchors) + '_' + str(round(avg_iou, 2)) + '_anchors.txt')
+        average_iou.append(avg_iou)
+        if not os.path.isdir(output_dir):
+            os.mkdir(output_dir)
+        with open(anchors_file, 'w') as f:
+            for anchor in anchors:
+                f.write("({:5f}, {:5f})\n".format(anchor.w, anchor.h))
+    print('average_iou:', average_iou);
 
 def k_mean_cluster(n_anchors, gt_boxes, loss_convergence=1e-6):
     """
