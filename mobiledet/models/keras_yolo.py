@@ -734,7 +734,6 @@ def recall_precision(hdf5_images, hdf5_boxes, yolo_model, anchors, class_names, 
             w  = (x1 - x0) / float(image.size[0])
             h  = (y1 - y0) / float(image.size[1])
             pred_Boxes.append(Box(xc, yc, w, h, c=score, label=c))
-            # print('cur_id', cur_id, 'Pred:', Box(xc, yc, w, h, c=score, label=c))
         y_pred.append(pred_Boxes)
 
         # Extract the ground truth boxes
@@ -753,19 +752,17 @@ def recall_precision(hdf5_images, hdf5_boxes, yolo_model, anchors, class_names, 
             label = int(box[-1])
             xc, yc, w, h = box[0:4]
             gt_Boxes.append(Box(xc, yc, w, h, c=1.0, label=label))
-            # print('cur_id', cur_id,'GT:', Box(xc, yc, w, h, c=1.0, label=label))
         
         r = get_recall_precision(pred_Boxes, gt_Boxes, 2, 0.5)
         person_results  += r[0]
         vehicle_results += r[1]
-        # print(r)
         y_batch.append(gt_Boxes)
 
-    person_presision =  person_results[0] / (person_results[0] + person_results[1])
-    person_recall =  person_results[0] / (person_results[0] + person_results[2])
+    person_presision =  person_results[0] / (0.001 + person_results[0] + person_results[1])
+    person_recall =  person_results[0] / (0.001 + person_results[0] + person_results[2])
     
-    vehicle_presision =  vehicle_results[0] / (vehicle_results[0] + vehicle_results[1])
-    vehicle_recall =  vehicle_results[0] / (vehicle_results[0] + vehicle_results[2])
+    vehicle_presision =  vehicle_results[0] / (0.001 + vehicle_results[0] + vehicle_results[1])
+    vehicle_recall =  vehicle_results[0] / (0.001 + vehicle_results[0] + vehicle_results[2])
 
     print('person','recall', person_recall, 'prec', person_presision)
     print('vehicle','recall', vehicle_recall, 'prec', vehicle_presision)

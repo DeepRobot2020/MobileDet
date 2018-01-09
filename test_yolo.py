@@ -163,9 +163,9 @@ def _main(args):
     yolo_model, _ = create_model(anchors, class_names, load_pretrained=True, 
         feature_extractor=FEATURE_EXTRACTOR, pretrained_path=model_path)
 
-    recall_precision(np.array(voc['train/images']), np.array(voc['train/boxes']), yolo_model, anchors, class_names)
+    recall_precision(np.array(voc['valid/images']), np.array(voc['valid/boxes']), yolo_model, anchors, class_names)
+    plot_model(yolo_model, to_file='model.png')
     return
-    # plot_model(yolo_model, to_file='model.png')
 
     model_file_basename, file_extension = os.path.splitext(os.path.basename(model_path))
 

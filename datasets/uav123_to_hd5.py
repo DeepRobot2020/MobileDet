@@ -42,8 +42,8 @@ parser.add_argument(
 
 parser.add_argument(
     '-d',
-    '--verify_enabled',
-    help='path to classes file, defaults to pascal_classes.txt',
+    '--verify_only',
+    help='verify the UAV HDF5 dataset',
     default=False)
 
 
@@ -52,51 +52,52 @@ def find_car_person_folders(seq_path):
     """
     assert(os.path.exists(seq_path))
     folders = os.listdir(seq_path)
-    if len(folders):
+    if len(folders) == 0:
         print('No folders in ' + seq_path)
+        return
     car_person_folders = []
     group_person_folders = []
     for folder in folders:
         person_match = re.search(r'person\d+$', folder)
         car_match = re.search(r'car\d+$', folder)
-        group_match = re.search(r'group\d+$', folder)
+        # group_match = re.search(r'group\d+$', folder)
         if person_match is not None:
             car_person_folders.append(person_match.group(0))
             print('Adding folder ' + person_match.group(0))
         elif car_match is not None:
             car_person_folders.append(car_match.group(0))
             print('Adding folder ' + car_match.group(0))
-        elif group_match is not None:
-            group_person_folders.append(group_match.group(0))
-            print('Adding folder ' + group_match.group(0))
+        # elif group_match is not None:
+        #     group_person_folders.append(group_match.group(0))
+        #     print('Adding folder ' + group_match.group(0))
     car_person_folders = sorted(car_person_folders)
-    group_person_folders = sorted(group_person_folders)
-    return car_person_folders + group_person_folders
+    # group_person_folders = sorted(group_person_folders)
+    return car_person_folders
 
 def find_car_person_anns(ann_path):
     """Find annoation files related to car and persons
     """
     car_re = r'car\d+(_\d+)?.txt'
     person_re = r'person\d+(_\d+)?.txt'
-    group_re = r'group\d+(_\d+)?.txt'
+    # group_re = r'group\d+(_\d+)?.txt'
     car_person_ann = []
     group_ann = []
     for ann in os.listdir(ann_path):
         car_match = re.match(car_re, ann)
         person_match = re.match(person_re, ann)
-        group_match = re.match(group_re, ann)
+        # group_match = re.match(group_re, ann)
         if car_match:
             car_person_ann.append(car_match.group(0))
             print('Adding Car anno ' + car_match.group(0))
         elif person_match:
             car_person_ann.append(person_match.group(0))
             print('Adding Person anno ' + person_match.group(0))
-        elif group_match:
-            group_ann.append(group_match.group(0))
-            print('Adding Person anno ' + group_match.group(0))
+        # elif group_match:
+        #     group_ann.append(group_match.group(0))
+        #     print('Adding Person anno ' + group_match.group(0))
     car_person_ann = sorted(car_person_ann)
-    group_ann = sorted(group_ann)
-    return car_person_ann + group_ann
+    # group_ann = sorted(group_ann)
+    return car_person_ann
 
 def match_dataseq_anno(seq_path, ann_path):
     """ Find the label file for each video folder. Note that for some videos there are multiple 
@@ -152,41 +153,52 @@ def match_dataseq_anno(seq_path, ann_path):
     return object_images, annotations, car_person_folders
 
 
-def select_object_detection_images(list_videos, list_annos, list_folders, clean_info = '~/data/UAV123/UAV123_10fps_clean'):
+def select_object_detection_images(list_videos, list_annos, list_folders, selection_folder = '~/data/UAV123/UAV123_selected'):
     """ The original UAV123 dataset was for object tracking purpose and usually only one of 
         the object is labelled. To train an object detection network, we need remove the images where 
         not all the objects are labelled. Otherwise, it might take longer time for model to converge. 
     """
-    clean_info = os.path.expanduser(clean_info)
-    assert(os.path.exists(clean_info))
+    selection_folder = os.path.expanduser(selection_folder)
+    assert(os.path.exists(selection_folder))
     assert(len(list_videos) == len(list_annos))
     assert(len(list_videos) > 0)
     out_images = []
     out_annos = []
     out_folders = []
-    selected_video = os.listdir(clean_info)
-    selected_video = [int(i) for i in selected_video]
-    selected_video = sorted(selected_video)
-    selected_imgs = dict.fromkeys(selected_video)
-    for video_file in selected_video:
-        img_idxs = os.listdir(os.path.join(clean_info, str(video_file)))
-        img_idxs = sorted([int(item.split('.jpg')[0]) for item in img_idxs])
-        selected_imgs[video_file] = img_idxs
-    # now parse list_videos, list_annos based on above selected_imgs information 
-    for key, labled_images in selected_imgs.iteritems():
-        raw_video = list_videos[key] # this in fact is a list of image
-        raw_anns = list_annos[key]
+    selected_video_name = os.listdir(selection_folder)
+    selected_video_name = [f.split('.')[0] for f in selected_video_name]
+    selected_video_name = sorted(selected_video_name)
+
+    selected_images = dict.fromkeys(selected_video_name)
+    for video_file in selected_video_name:
+        label_name = video_file + '.txt'
+        label_name = os.path.join(selection_folder, label_name)
+        with open(label_name, 'r') as f:
+            img_idxs = [line.rstrip() for line in f]
+        selected_images[video_file] = img_idxs
+    import pdb; pdb.set_trace()
+
+    for i in range(len(list_folders)):
+        if list_folders[i] not in selected_images:
+            continue
+        raw_video = list_videos[i] # this in fact is a list of image
+        raw_anns = list_annos[i]
         video = []
         anns =[]
-        for i in labled_images:
-            if raw_anns[i][2] * raw_anns[i][3] < 16: # w*h > 16 pixes
+        for j in range(len(raw_video)):
+            if raw_anns[j][2] * raw_anns[j][3] < 16: # w*h > 16 pixes
                 continue
-            video.append(raw_video[i])
-            anns.append(raw_anns[i])
+            image_name = raw_video[j].split('/')[-1]
+            if image_name not in selected_images[list_folders[i]]:
+                continue
+            video.append(raw_video[j])
+            anns.append(raw_anns[j])
         out_images.append(video)
         out_annos.append(np.array(anns))
-        out_folders.append(list_folders[key])
+        out_folders.append(list_folders[i])
     return out_images, out_annos, out_folders
+
+    
 
 def balance_video_annos(videos, annos, max_allowed_sample=100):
     """ The number if images for each videos has large variance and this might
@@ -297,10 +309,10 @@ def _main(args):
     seq_path = os.path.expanduser(args.seq_path)
     anno_path = os.path.expanduser(args.anno_path)
     hdf5_path   = os.path.expanduser(args.hdf5_path)
-    verify_enabled = args.verify_enabled
+    verify_only = args.verify_only
     assert(os.path.exists(seq_path))
     assert(os.path.exists(anno_path))
-    if verify_enabled:
+    if verify_only:
         hdf5_path = os.path.join(hdf5_path, 'UAV123.hdf5')
         print("Verifying the HD5 data....")
         if not os.path.exists(hdf5_path):
@@ -316,6 +328,7 @@ def _main(args):
     list_videos, list_annos, list_folders = match_dataseq_anno(seq_path, anno_path)
     print(len(list_videos), len(list_annos))
     videos, annos, folders = select_object_detection_images(list_videos, list_annos, list_folders)
+
     print('Total number of images: '+ str(sum([len(i) for i in videos])))
     balance_images, balance_annos, unbalance_images, unbalance_annos = balance_video_annos(videos, annos)
     Xtrain, ytrain = shuffle(balance_images, balance_annos, random_state=0)

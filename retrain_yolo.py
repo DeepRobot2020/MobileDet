@@ -57,8 +57,7 @@ def _main(args):
     anchors_path = os.path.expanduser(args.anchors_path)
     class_names  = get_classes(classes_path)
     anchors      = get_anchors(anchors_path)
-
-    anchors = YOLO_ANCHORS
+    # anchors = YOLO_ANCHORS
     if SHRINK_FACTOR == 16:
         anchors = anchors *2
     print('Anchors:')
@@ -75,8 +74,13 @@ def _main(args):
     # clear any previous sesson
     K.clear_session()
 
+    load_pretrained = False
+    pretrained_path = None
+    pretrained_path = 'weights.bk.1/mobilenet_s1_best.TrueTrue.h5'
+    if pretrained_path:
+        load_pretrained = True
     model_body, model = create_model(anchors, class_names, 
-        feature_extractor=FEATURE_EXTRACTOR, load_pretrained=True, pretrained_path='/mnt/data/github/MobileDet/weights.mobilenet.2/mobilenet_s1_best.TrueTrue.h5')
+        feature_extractor=FEATURE_EXTRACTOR, load_pretrained=load_pretrained, pretrained_path=pretrained_path)
 
     train_batch_gen = DataBatchGenerator(train_images, train_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=True)
     valid_batch_gen = DataBatchGenerator(valid_images, valid_boxes, IMAGE_W, IMAGE_H, FEAT_W, FEAT_H, anchors, class_names, jitter=True)
@@ -176,9 +180,10 @@ def train(model_body, model, class_names, anchors, train_batch_gen, valid_batch_
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 20
+    num_epochs = 50
     freq_recall_precision = 5
 
+    recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)
     weight_name = 'weights/{}_s1_best.{}{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE)
     checkpoint = ModelCheckpoint(weight_name, monitor='val_loss', save_weights_only=True, save_best_only=True)
     for lp in range(num_epochs//freq_recall_precision):
