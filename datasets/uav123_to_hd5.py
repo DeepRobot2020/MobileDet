@@ -333,11 +333,10 @@ def _main(args):
     print('Total number of images: '+ str(sum([len(i) for i in videos])))
     balance_images, balance_annos, unbalance_images, unbalance_annos = balance_video_annos(videos, annos)
     Xtrain, ytrain = shuffle(balance_images, balance_annos, random_state=0)
-    _, Xvalid, _, yvalid = train_test_split(unbalance_images, unbalance_annos, test_size=0.15, random_state=42)
-    # draw_on_images(Xtrain, ytrain, name_hint='train')
-    # draw_on_images(Xvalid, yvalid, name_hint='valid')
+    Xvalid, Xtest, yvalid, ytest = train_test_split(unbalance_images, unbalance_annos, test_size=0.4, random_state=42)
+
     # We will use balance_images, balance_annos as train data
-    # and select a portion from unbalance_images, unbalance_annos to use as validation data 
+    # and select a portion from unbalance_images, unbalance_annos to use as validation and test data 
     if not os.path.exists(hdf5_path):
         print('Creating ' + hdf5_path)
         os.mkdir(hdf5_path)
@@ -357,7 +356,9 @@ def _main(args):
         vlen=np.dtype(int))  # variable length default int
     train_group = uav123_h5file.create_group('train')  
     valid_group = uav123_h5file.create_group('valid')  
-    # store class list for reference class ids as csv fixed-length numpy string
+    test_group = uav123_h5file.create_group('test')  
+    
+
     uav123_h5file.attrs['classes'] = np.string_(str.join(',', classes))
 
     # store images as variable length uint8 arrays
@@ -367,17 +368,26 @@ def _main(args):
     dataset_valid_images = valid_group.create_dataset(
         'images', shape=(0, ), maxshape=(None, ), dtype=uint8_dt)
 
-    # store images as variable length uint8 arrays
+    dataset_test_images = test_group.create_dataset(
+        'images', shape=(0, ), maxshape=(None, ), dtype=uint8_dt)
+
+
     dataset_train_boxes = train_group.create_dataset(
         'boxes', shape=(0, ), maxshape=(None, ), dtype=uint32_dt)
 
     dataset_valid_boxes = valid_group.create_dataset(
         'boxes', shape=(0, ), maxshape=(None, ), dtype=uint32_dt)
 
+    dataset_test_boxes = test_group.create_dataset(
+        'boxes', shape=(0, ), maxshape=(None, ), dtype=uint32_dt)
+
     print('Adding ' + str(len(Xtrain)) + ' training data')
     add_to_dataset(dataset_train_images, dataset_train_boxes, Xtrain, ytrain, start=0)
     print('Adding ' + str(len(Xvalid)) + ' validation data')
-    add_to_dataset(dataset_valid_images, dataset_valid_boxes, Xvalid, yvalid, start=0)   
+    add_to_dataset(dataset_valid_images, dataset_valid_boxes, Xvalid, yvalid, start=0) 
+    print('Adding ' + str(len(Xvalid)) + ' test data')
+    add_to_dataset(dataset_test_images, dataset_test_boxes, Xtest, ytest, start=0) 
+
     print('Closing HDF5 file.')
     uav123_h5file.close()
     print('Done.')

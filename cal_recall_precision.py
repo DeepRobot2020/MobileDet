@@ -45,7 +45,7 @@ from tensorflow.python.tools.freeze_graph import freeze_graph
 import time
 
 parser = argparse.ArgumentParser(
-    description='Run a YOLO_v2 style detection model on test images..')
+    description='Calculate YOLOv2 recall and precision on test datasets..')
 parser.add_argument(
     '-m',
     '--model_path',
@@ -61,11 +61,6 @@ parser.add_argument(
     '--classes_path',
     help='path to classes file, defaults to drone_classes.txt',
     default='model_data/drone_classes.txt')
-parser.add_argument(
-    '-t',
-    '--test_path',
-    help='path to directory of test images, defaults to images/',
-    default='images')
 parser.add_argument(
     '-o',
     '--output_path',
@@ -83,63 +78,10 @@ parser.add_argument(
     type=float,
     help='threshold for non max suppression IOU, default .5',
     default=.3)
-
-parser.add_argument(
-    '-rp',
-    '--calculate_precision_recall',
-    type=float,
-    help='Calculate precision and recall',
-    default=True)
-
-parser.add_argument(
-    '-tf',
-    '--convert_to_tensorflow',
-    type=float,
-    help='convert the model to tensorflow and save as protocol buffer',
-    default=True)
-
-
-def freeze(tf_session, model_name, model_input_name, width, height, channels, model_output_name):
-    input_binary = True
-    graph_def = tf_session.graph.as_graph_def()
-
-    tf.train.Saver().save(tf_session, model_name + '.ckpt')
-    tf.train.write_graph(tf_session.graph.as_graph_def(), logdir='.', name=model_name + '.binary.pb', as_text=not input_binary)
-
-    # We save out the graph to disk, and then call the const conversion routine.
-    checkpoint_state_name = model_name + ".ckpt.index"
-    input_graph_name = model_name + ".binary.pb"
-    output_graph_name = model_name + ".pb"
-
-    input_graph_path = os.path.join(".", input_graph_name)
-    input_saver_def_path = ""
-    input_checkpoint_path = os.path.join(".", model_name + '.ckpt')
-
-    output_node_names = model_output_name
-    restore_op_name = "save/restore_all"
-    filename_tensor_name = "save/Const:0"
-
-    output_graph_path = os.path.join('.', output_graph_name)
-    clear_devices = False
-
-    freeze_graph(input_graph_path, input_saver_def_path,
-                 input_binary, input_checkpoint_path,
-                 output_node_names, restore_op_name,
-                 filename_tensor_name, output_graph_path,
-                 clear_devices, "")
-
-    print("Model loaded from: %s" % model_name)
-    print("Output written to: %s" % output_graph_path)
-    print("Model input name : %s" % model_input_name)
-    print("Model input size : %dx%dx%d (WxHxC)" % (width, height, channels))
-    print("Model output name: %s" % model_output_name)
-
-
 def _main(args):
     model_path = os.path.expanduser(args.model_path)
     anchors_path = os.path.expanduser(args.anchors_path)
     classes_path = os.path.expanduser(args.classes_path)
-    test_path = os.path.expanduser(args.test_path)
     output_path = os.path.expanduser(args.output_path)
 
     data_path = '~/data/uav123.hdf5'
@@ -163,6 +105,10 @@ def _main(args):
 
     hdf5_images = np.array(voc['test/images'])
 
+    recall_precision(np.array(voc['test/images']), np.array(voc['test/boxes']), 
+        yolo_model, anchors, class_names, num_samples=2048)
+
+    return
 
     model_file_basename, file_extension = os.path.splitext(os.path.basename(model_path))
 
@@ -171,9 +117,6 @@ def _main(args):
 
     sess = K.get_session()
     width, height, channels = int(yolo_model.input.shape[2]), int(yolo_model.input.shape[1]), int(yolo_model.input.shape[3])
-
-    # END OF keras specific code
-    # freeze(sess, model_file_basename, model_input, width, height, channels, model_output)
 
     # Verify model, anchors, and classes are compatible
     num_classes = len(class_names)
@@ -211,20 +154,15 @@ def _main(args):
         score_threshold=args.score_threshold,
         iou_threshold=args.iou_threshold)
 
+    num_samples = 1024
+    n_samples = hdf5_images.shape[0]
+    sample_list = np.random.choice(n_samples, num_samples, replace=False)
+
     idx = 0
-    image_files = sorted(os.listdir(test_path))
-    for idx in range(len(image_files)):
+    for cur_id in sample_list:
+        # Original boxes stored as 1D list of class, x_min, y_min, x_max, y_max.
+        image = PIL.Image.open(io.BytesIO(hdf5_images[cur_id]))
         
-        image_file = image_files[idx]
-        try:
-            image_type = imghdr.what(os.path.join(test_path, image_file))
-            if not image_type:
-                continue
-        except IsADirectoryError:
-            continue
-
-        image = Image.open(os.path.join(test_path, image_file))
-
         resized_image = image.resize(
             tuple(reversed(model_image_size)), Image.BICUBIC)
 

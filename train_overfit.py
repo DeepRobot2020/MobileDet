@@ -34,13 +34,13 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help='path to HDF5 file containing pascal voc dataset',
-    default='~/data/pascal_voc_07_12_person_vehicle.hdf5')
+    default='~/data/uav123.hdf5')
 
 argparser.add_argument(
     '-a',
     '--anchors_path',
     help='path to anchors file, defaults to pascal_anchors.txt',
-    default='model_data/drone_anchors.txt')
+    default='model_data/uav123_anchors.txt')
 
 argparser.add_argument(
     '-c',
@@ -53,7 +53,7 @@ argparser.add_argument(
     '--num_epoches',
     help='num of epoches to overfit the image',
     type=int,
-    default=1000)
+    default=1)
 
 
 def _main(args):
@@ -72,8 +72,11 @@ def _main(args):
     print('Prior classes:')
     print(class_names)
 
+
     num_anchors = len(anchors)
     voc = h5py.File(voc_path, 'r')
+    print(voc['train/images'].shape)
+    # import pdb; pdb.set_trace()
     
     test_id = 28
     image = PIL.Image.open(io.BytesIO(voc['train/images'][test_id]))
@@ -133,7 +136,7 @@ def _main(args):
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
     yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names), weights='imagenet', network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
-    # yolo_model.summary()
+    yolo_model.summary()
 
     # TODO: Replace Lambda with custom Keras layer for loss.
     model_loss = Lambda(

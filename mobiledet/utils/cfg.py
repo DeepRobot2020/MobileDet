@@ -8,14 +8,13 @@ import numpy as np
 # Most current state-of-the-art models have max-pooling layers (Jan, 2018)
 # FEATURE_EXTRACTOR = 'darknet19'
 FEATURE_EXTRACTOR = 'mobilenet'
-DATASET_NAME = 'UAV123'
 N_CLASSES         = 2
 N_ANCHORS         = 5
 BATCH_SIZE        = 4
-IMAGE_H           = 608
-IMAGE_W           = 608
+IMAGE_H           = 416
+IMAGE_W           = 416
 
-SHALLOW_DETECTOR = True
+SHALLOW_DETECTOR = False
 USE_X0_FEATURE = True
 
 # Default anchor boxes

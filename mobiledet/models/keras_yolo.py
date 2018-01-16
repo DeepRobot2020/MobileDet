@@ -676,7 +676,7 @@ def get_recall_precision(bboxes_pred, bboxes_gt, num_classes, iou_threshold=0.4)
     return detection_results
 
 
-def recall_precision(hdf5_images, hdf5_boxes, yolo_model, anchors, class_names, num_samples=1024, score_threshold=0.3, iou_threshold=0.3):
+def recall_precision(hdf5_images, hdf5_boxes, yolo_model, anchors, class_names, num_samples=512, score_threshold=0.3, iou_threshold=0.3):
     n_samples = hdf5_images.shape[0]
     sample_list = np.random.choice(n_samples, num_samples, replace=False)
 

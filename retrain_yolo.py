@@ -3,7 +3,8 @@ This is a script that can be used to retrain the YOLOv2 model for your own datas
 """
 import argparse
 
-import os
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -35,13 +36,13 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help="path to numpy data file (.npz) containing np.object array 'boxes' and np.uint8 array 'images'",
-    default='~/data/pascal_voc_07_12_person_vehicle.hdf5')
+    default='~/data/uav123.hdf5')
 
 argparser.add_argument(
     '-a',
     '--anchors_path',
     help='path to anchors file, defaults to yolo_anchors.txt',
-    default=os.path.join('model_data', 'pascal_anchors.txt'))
+    default=os.path.join('model_data', 'uav123_anchors.txt'))
 
 argparser.add_argument(
     '-c',
@@ -76,7 +77,7 @@ def _main(args):
 
     load_pretrained = False
     pretrained_path = None
-    pretrained_path = 'weights.bk.1/mobilenet_s1_best.TrueTrue.h5'
+    pretrained_path = 'weights_voc/darknet19_s3_best.FalseFalse.h5'
     if pretrained_path:
         load_pretrained = True
     model_body, model = create_model(anchors, class_names, 
@@ -180,7 +181,7 @@ def train(model_body, model, class_names, anchors, train_batch_gen, valid_batch_
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 50
+    num_epochs = 10
     freq_recall_precision = 5
 
     recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)
