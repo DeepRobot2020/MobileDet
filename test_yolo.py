@@ -48,41 +48,46 @@ parser = argparse.ArgumentParser(
     description='Run a YOLO_v2 style detection model on test images..')
 parser.add_argument(
     '-m',
-    '--model_path',
-    help='path to h5 model file containing body'
-    'of a YOLO_v2 model')
+    '--weight_path',
+    help='path to trained model weight file')
+
 parser.add_argument(
     '-a',
     '--anchors_path',
     help='path to anchors file, defaults to pascal_anchors.txt',
     default='model_data/uav123_anchors.txt')
+
 parser.add_argument(
     '-c',
     '--classes_path',
     help='path to classes file, defaults to drone_classes.txt',
     default='model_data/drone_classes.txt')
+
 parser.add_argument(
     '-t',
     '--test_path',
     help='path to directory of test images, defaults to images/',
     default='images')
+
 parser.add_argument(
     '-o',
     '--output_path',
     help='path to output test images, defaults to images/out',
     default='images/out')
+
 parser.add_argument(
     '-s',
     '--score_threshold',
     type=float,
     help='threshold for bounding box scores, default .6',
-    default=.3)
+    default=.6)
+
 parser.add_argument(
     '-iou',
     '--iou_threshold',
     type=float,
-    help='threshold for non max suppression IOU, default .5',
-    default=.3)
+    help='threshold for non max suppression IOU, default .6',
+    default=.6)
 
 parser.add_argument(
     '-rp',
@@ -136,15 +141,11 @@ def freeze(tf_session, model_name, model_input_name, width, height, channels, mo
 
 
 def _main(args):
-    model_path = os.path.expanduser(args.model_path)
+    model_path = os.path.expanduser(args.weight_path)
     anchors_path = os.path.expanduser(args.anchors_path)
     classes_path = os.path.expanduser(args.classes_path)
     test_path = os.path.expanduser(args.test_path)
     output_path = os.path.expanduser(args.output_path)
-
-    data_path = '~/data/uav123.hdf5'
-    data_path = os.path.expanduser(data_path)
-    voc = h5py.File(data_path, 'r')
 
     if not os.path.exists(output_path):
         print('Creating output path {}'.format(output_path))
@@ -161,9 +162,6 @@ def _main(args):
     yolo_model, _ = create_model(anchors, class_names, load_pretrained=True, 
         feature_extractor=FEATURE_EXTRACTOR, pretrained_path=model_path)
 
-    hdf5_images = np.array(voc['test/images'])
-
-
     model_file_basename, file_extension = os.path.splitext(os.path.basename(model_path))
 
     model_input = yolo_model.input.name.replace(':0', '') # input_1
@@ -174,17 +172,6 @@ def _main(args):
 
     # END OF keras specific code
     # freeze(sess, model_file_basename, model_input, width, height, channels, model_output)
-
-    # Verify model, anchors, and classes are compatible
-    num_classes = len(class_names)
-    num_anchors = len(anchors)
-    # TODO: Assumes dim ordering is channel last
-    model_output_channels = yolo_model.layers[-1].output_shape[-1]
-    assert model_output_channels == num_anchors * (num_classes + 5), \
-        'Mismatch between model and given anchor and class sizes. ' \
-        'Specify matching anchors and classes with --anchors_path and ' \
-        '--classes_path flags.'
-    print('{} model, anchors, and classes loaded.'.format(model_path))
 
     # Check if model is fully convolutional, assuming channel last order.
     model_image_size = yolo_model.layers[0].input_shape[1:3]
@@ -268,7 +255,6 @@ def _main(args):
             else:
                 text_origin = np.array([left, top + 1])
 
-            # My kingdom for a good redistributable image drawing library.
             for i in range(thickness):
                 draw.rectangle(
                     [left + i, top + i, right - i, bottom - i],
