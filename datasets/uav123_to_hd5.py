@@ -35,6 +35,12 @@ parser.add_argument(
     default='~/data/UAV123/UAV123_10fps/anno/UAV123_10fps/')
 
 parser.add_argument(
+    '-s',
+    '--selected',
+    help='path to UAV123 selected',
+    default='datasets/UAV123_selected/')
+
+parser.add_argument(
     '-f',
     '--hdf5_path',
     help='path to output UAV123 hdf5',
@@ -307,10 +313,12 @@ def draw_on_images(dataset_images, dataset_boxes, out_dir='/tmp/uav123/'):
     return 
 
 def _main(args):
+    verify_only = args.verify_only
     seq_path = os.path.expanduser(args.seq_path)
     anno_path = os.path.expanduser(args.anno_path)
     hdf5_path   = os.path.expanduser(args.hdf5_path)
-    verify_only = args.verify_only
+    uav123_selected = args.selected
+
     assert(os.path.exists(seq_path))
     assert(os.path.exists(anno_path))
     if verify_only:
@@ -328,7 +336,8 @@ def _main(args):
         return
     list_videos, list_annos, list_folders = match_dataseq_anno(seq_path, anno_path)
     print(len(list_videos), len(list_annos))
-    videos, annos, folders = select_object_detection_images(list_videos, list_annos, list_folders)
+    videos, annos, folders = select_object_detection_images(
+        list_videos, list_annos, list_folders, uav123_selected)
 
     print('Total number of images: '+ str(sum([len(i) for i in videos])))
     balance_images, balance_annos, unbalance_images, unbalance_annos = balance_video_annos(videos, annos)

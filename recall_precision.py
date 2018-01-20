@@ -64,38 +64,32 @@ parser.add_argument(
     default='model_data/drone_classes.txt')
 
 parser.add_argument(
-    '-o',
-    '--output_path',
-    help='path to output test images, defaults to images/out',
-    default='images/out')
+    '-d',
+    '--data_path',
+    help='path to the HDF5 file which has a "test" group',
+    default='~/data/uav123.hdf5')
 
 parser.add_argument(
     '-s',
     '--score_threshold',
     type=float,
     help='threshold for bounding box scores, default .6',
-    default=.3)
+    default=.6)
 
 parser.add_argument(
     '-iou',
     '--iou_threshold',
     type=float,
-    help='threshold for non max suppression IOU, default .5',
-    default=.3)
+    help='threshold for non max suppression IOU, default .65',
+    default=.6)
 
 def _main(args):
     model_path = os.path.expanduser(args.weight_path)
     anchors_path = os.path.expanduser(args.anchors_path)
     classes_path = os.path.expanduser(args.classes_path)
-    output_path = os.path.expanduser(args.output_path)
-
-    data_path = '~/data/uav123.hdf5'
-    data_path = os.path.expanduser(data_path)
+    data_path = os.path.expanduser(args.data_path)
     dataset = h5py.File(data_path, 'r')
 
-    if not os.path.exists(output_path):
-        print('Creating output path {}'.format(output_path))
-        os.mkdir(output_path)
 
     class_names  = get_classes(classes_path)
     anchors = get_anchors(anchors_path)
