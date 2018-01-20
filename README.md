@@ -3,10 +3,22 @@ MobileNet and YOLOv2 based real-time Person and Vehicle detector.
 The final verion of model is called: YOLOv2-MobileNet_Shallow_3Scales
 This model can run up to 10fps on NVIDIA TX2 platform
 
+
+## Dependencies
+    Keras
+    Tensorflow
+    scikit-learn
+    Numpy
+    h5py  
+    Pillow  
+    Python 3
+    opencv-python
+
 ## UAV123 dataset 
 ### Test with UAV123 video sequences 
- * 0. Download the UAV123 dataset zip file from [link](https://drive.google.com/file/d/0B6sQMCU1i4NbZmFlQmJBVDlLRDg/edit). It is about 4.4G. Unzip it into '~/data/UAV123/'. 
-     Download the pre-processed UAV123 dataset from [link](https://drive.google.com/open?id=1_y_T5dEq-jclesTNxQR-MK3cWR8YmQAR) and placed it under '~/data' folder. 
+ * 0. Download the UAV123 dataset zip file from [link](https://drive.google.com/file/d/0B6sQMCU1i4NbZmFlQmJBVDlLRDg/edit). It is about 4.4G. 
+  Unzip it into '~/data/UAV123/'. 
+  Download the pre-processed UAV123 dataset from [link](https://drive.google.com/open?id=1_y_T5dEq-jclesTNxQR-MK3cWR8YmQAR) and placed it under '~/data' folder. 
  * 1. Download weights from this google drive [link to UAV123 weights](https://drive.google.com/open?id=1dUjdlRjuWyvyMQKuaF6X9RExKBIRedJt) and place the unzipped folder to 'MobileDet/weights_uav123'
  * 2. Modify the cfg.py as below to configure the model as YOLOv2-MobileNet_Shallow_3Scales
 ```python
