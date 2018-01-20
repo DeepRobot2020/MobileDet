@@ -31,3 +31,8 @@ python recall_precision.py  -m weights_uav123/mobilenet_s3_best.TrueTrue.h5 -d ~
  * 3. After above two steps, use  'retrain_yolo.py' to retrain the new dataset
 
 
+
+### YAD2K
+This project is based on: https://github.com/allanzelener/YAD2K
+
+
