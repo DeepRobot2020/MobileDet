@@ -165,6 +165,8 @@ def _main(args):
         vlen=np.dtype(int))  # variable length default int
     train_group = voc_h5file.create_group('train')
     val_group = voc_h5file.create_group('valid')
+
+    
     test_group = voc_h5file.create_group('test')
 
     # store class list for reference class ids as csv fixed-length numpy string

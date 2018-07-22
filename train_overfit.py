@@ -18,6 +18,8 @@ from keras import backend as K
 from keras.layers import Input, Lambda
 from keras.models import Model
 
+from mobiledet.models.keras_yolo import yolo_eval, yolo_loss, decode_yolo_output, create_model
+
 from mobiledet.models.keras_yolo import (preprocess_true_boxes, yolo_body_mobilenet,
                                      yolo_eval, decode_yolo_output, yolo_loss, yolo_body_darknet)
 # from mobiledet.models.keras_darknet19 import darknet_feature_extractor
@@ -33,27 +35,27 @@ argparser = argparse.ArgumentParser(
 argparser.add_argument(
     '-d',
     '--data_path',
-    help='path to HDF5 file containing pascal voc dataset',
-    default='~/data/uav123.hdf5')
+    help='path to HDF5 file containing a hdf5 dataset',
+    default='~/data/lisa.hdf5')
 
 argparser.add_argument(
     '-a',
     '--anchors_path',
-    help='path to anchors file, defaults to pascal_anchors.txt',
-    default='model_data/uav123_anchors.txt')
+    help='path to anchors file, defaults to anchors box file',
+    default='model_data/lisa_anchors.txt')
 
 argparser.add_argument(
     '-c',
     '--classes_path',
-    help='path to classes file, defaults to drone_classes.txt',
-    default='model_data/drone_classes.txt')
+    help='path to classes file',
+    default='model_data/lisa_classes.txt')
 
 argparser.add_argument(
     '-n',
     '--num_epoches',
     help='num of epoches to overfit the image',
     type=int,
-    default=1)
+    default=1000)
 
 
 def _main(args):
@@ -78,9 +80,10 @@ def _main(args):
     print(voc['train/images'].shape)
     # import pdb; pdb.set_trace()
     
-    test_id = 28
+    test_id = 1
     image = PIL.Image.open(io.BytesIO(voc['train/images'][test_id]))
-    orig_size = np.array([image.width, image.height])
+    # import pdb; pdb.set_trace()
+    orig_size = np.array(image.size)
     orig_size = np.expand_dims(orig_size, axis=0)
 
     net_width    = IMAGE_W
@@ -135,7 +138,10 @@ def _main(args):
     print('Matching boxes for active detectors:')
     print(matching_true_boxes[np.where(detectors_mask == 1)[:-1]])
 
-    yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names), weights='imagenet', network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
+    yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names), network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
+    
+    # yolo_model, model = create_model(anchors, class_names, feature_extractor=FEATURE_EXTRACTOR)
+
     yolo_model.summary()
 
     # TODO: Replace Lambda with custom Keras layer for loss.
@@ -176,7 +182,7 @@ def _main(args):
     yolo_outputs = decode_yolo_output(yolo_model.output, anchors, len(class_names))
     input_image_shape = K.placeholder(shape=(2, ))
     boxes, scores, classes = yolo_eval(
-        yolo_outputs, input_image_shape, score_threshold=.3, iou_threshold=.9)
+        yolo_outputs, input_image_shape, score_threshold=.8, iou_threshold=.9)
 
     # Run prediction on overfit image.
     sess = K.get_session()  # TODO: Remove dependence on Tensorflow session.

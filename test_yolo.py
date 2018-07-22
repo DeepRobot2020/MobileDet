@@ -3,6 +3,7 @@
 import argparse
 import colorsys
 import imghdr
+import glob
 import os
 import os.path as osp
 import random
@@ -19,16 +20,12 @@ from keras.models import load_model, Model
 from keras.callbacks import TensorBoard, ModelCheckpoint, EarlyStopping
 from keras.optimizers import Adam
 
-from mobiledet.models.keras_yolo import preprocess_true_boxes
 from mobiledet.models.keras_yolo import yolo_eval, yolo_loss, decode_yolo_output, create_model
 from mobiledet.models.keras_yolo import yolo_body_darknet, yolo_body_mobilenet                     
 from mobiledet.models.keras_yolo import recall_precision
 
 
 from mobiledet.utils.draw_boxes import draw_boxes
-
-from mobiledet.utils import read_voc_datasets_train_batch, brightness_augment, augment_image
-from mobiledet.models.keras_yolo import yolo_get_detector_mask
 
 from cfg import *
 from mobiledet.utils import *
@@ -54,14 +51,14 @@ parser.add_argument(
 parser.add_argument(
     '-a',
     '--anchors_path',
-    help='path to anchors file, defaults to pascal_anchors.txt',
-    default='model_data/uav123_anchors.txt')
+    help='path to anchors file, defaults to lisa_anchors.txt',
+    default='model_data/lisa_anchors.txt')
 
 parser.add_argument(
     '-c',
     '--classes_path',
     help='path to classes file, defaults to drone_classes.txt',
-    default='model_data/drone_classes.txt')
+    default='model_data/lisa_classes.txt')
 
 parser.add_argument(
     '-t',
@@ -159,8 +156,8 @@ def _main(args):
     print(class_names)
     print(anchors)
 
-    yolo_model, _ = create_model(anchors, class_names, load_pretrained=True, 
-        feature_extractor=FEATURE_EXTRACTOR, pretrained_path=model_path)
+    yolo_model, yolo_model_for_training = create_model(anchors, class_names, load_pretrained=True, 
+        feature_extractor=FEATURE_EXTRACTOR, pretrained_path=model_path, freeze_body=True)
 
     model_file_basename, file_extension = os.path.splitext(os.path.basename(model_path))
 
@@ -191,6 +188,7 @@ def _main(args):
 
     # Generate output tensor targets for filtered bounding boxes.
     yolo_outputs = decode_yolo_output(yolo_model.output, anchors, len(class_names))
+
     input_image_shape = K.placeholder(shape=(2, ))
     boxes, scores, classes = yolo_eval(
         yolo_outputs,
@@ -199,18 +197,14 @@ def _main(args):
         iou_threshold=args.iou_threshold)
 
     idx = 0
-    image_files = sorted(os.listdir(test_path))
+    image_files = sorted(glob.glob(test_path + '/*.png')) 
+
+    # import pdb; pdb.set_trace()
     for idx in range(len(image_files)):
         
         image_file = image_files[idx]
-        try:
-            image_type = imghdr.what(os.path.join(test_path, image_file))
-            if not image_type:
-                continue
-        except IsADirectoryError:
-            continue
-
-        image = Image.open(os.path.join(test_path, image_file))
+        # print(os.path.join(test_path, image_file))
+        image = Image.open(image_file)
 
         resized_image = image.resize(
             tuple(reversed(model_image_size)), Image.BICUBIC)

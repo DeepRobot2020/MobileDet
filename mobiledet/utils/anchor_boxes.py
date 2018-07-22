@@ -56,7 +56,7 @@ def main():
     n_small = 0
     average_iou = []
     print("Calculating Anchors using K-mean Clustering....")
-    for number_anchors in range(2, 16):
+    if number_anchors in range(2, 16):
         for i in range(train_images.shape[0]):
             img, boxes = hdf5_read_image_boxes(train_images, train_boxes, i)
             img_height, img_width = img.shape[:2]

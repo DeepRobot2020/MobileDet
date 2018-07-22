@@ -609,10 +609,10 @@ def create_model(anchors, class_names, feature_extractor='darknet19',
 
     # Create model body.
     if feature_extractor == 'darknet19':
-        yolo_model = yolo_body_darknet(image_input, len(anchors), len(class_names), weights=None,
+        yolo_model = yolo_body_darknet(image_input, len(anchors), len(class_names),
             network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
     elif feature_extractor == 'mobilenet':
-        yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names), weights=None,
+        yolo_model = yolo_body_mobilenet(image_input, len(anchors), len(class_names),
             network_config=[SHALLOW_DETECTOR, USE_X0_FEATURE])
     else:
         assert(False)
@@ -677,6 +677,7 @@ def get_recall_precision(bboxes_pred, bboxes_gt, num_classes, iou_threshold=0.4)
 
 
 def recall_precision(hdf5_images, hdf5_boxes, yolo_model, anchors, class_names, num_samples=512, score_threshold=0.3, iou_threshold=0.3):
+    return 
     n_samples = hdf5_images.shape[0]
     sample_list = np.random.choice(n_samples, num_samples, replace=False)
 
@@ -699,7 +700,7 @@ def recall_precision(hdf5_images, hdf5_boxes, yolo_model, anchors, class_names, 
     for cur_id in sample_list:
         # Original boxes stored as 1D list of class, x_min, y_min, x_max, y_max.
         image = PIL.Image.open(io.BytesIO(hdf5_images[cur_id]))
-        orig_size = np.array([image.width, image.height])
+        orig_size = np.array([image.size])
         orig_size = np.expand_dims(orig_size, axis=0)
 
         image = image.resize(
@@ -745,6 +746,8 @@ def recall_precision(hdf5_images, hdf5_boxes, yolo_model, anchors, class_names, 
         boxes_wh = cur_boxes[:, 3:5] - cur_boxes[:, 1:3]
         boxes_xy = boxes_xy / orig_size
         boxes_wh = boxes_wh / orig_size
+
+        import pdb; pdb.set_trace()
         cur_boxes = np.concatenate((boxes_xy, boxes_wh, cur_boxes[:, 0:1]), axis=1)
 
         gt_Boxes = []

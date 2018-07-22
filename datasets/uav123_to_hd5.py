@@ -302,7 +302,7 @@ def draw_bboxes(image, bboxes):
         cv2.rectangle(decoded_image, (corner[0], corner[1]),(corner[2], corner[3]), (0,255,0), 10)
     return decoded_image
 
-def draw_on_images(dataset_images, dataset_boxes, out_dir='/tmp/uav123/'):
+def draw_on_images(dataset_images, dataset_boxes, out_dir='/tmp/'):
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
     for i in range(dataset_images.shape[0]):
@@ -310,7 +310,7 @@ def draw_on_images(dataset_images, dataset_boxes, out_dir='/tmp/uav123/'):
         img = draw_bboxes(dataset_images[i], boxes)
         out_img_path = os.path.join(out_dir, str(i)+'.jpg')
         cv2.imwrite(out_img_path, img)
-    return 
+
 
 def _main(args):
     verify_only = args.verify_only
@@ -341,6 +341,7 @@ def _main(args):
 
     print('Total number of images: '+ str(sum([len(i) for i in videos])))
     balance_images, balance_annos, unbalance_images, unbalance_annos = balance_video_annos(videos, annos)
+    
     Xtrain, ytrain = shuffle(balance_images, balance_annos, random_state=0)
     Xvalid, Xtest, yvalid, ytest = train_test_split(unbalance_images, unbalance_annos, test_size=0.4, random_state=42)
 

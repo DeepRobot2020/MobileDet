@@ -36,19 +36,19 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help="path to numpy data file (.npz) containing np.object array 'boxes' and np.uint8 array 'images'",
-    default='~/data/uav123.hdf5')
+    default='~/data/lisa.hdf5')
 
 argparser.add_argument(
     '-a',
     '--anchors_path',
-    help='path to anchors file, defaults to yolo_anchors.txt',
-    default=os.path.join('model_data', 'uav123_anchors.txt'))
+    help='path to anchors file, defaults to lisa_anchors.txt',
+    default=os.path.join('model_data', 'lisa_anchors.txt'))
 
 argparser.add_argument(
     '-c',
     '--classes_path',
     help='path to classes file, defaults to drone_classes.txt',
-    default='model_data/drone_classes.txt')
+    default='model_data/lisa_classes.txt')
 
 
 
@@ -58,7 +58,7 @@ def _main(args):
     anchors_path = os.path.expanduser(args.anchors_path)
     class_names  = get_classes(classes_path)
     anchors      = get_anchors(anchors_path)
-    # anchors = YOLO_ANCHORS
+
     if SHRINK_FACTOR == 16:
         anchors = anchors *2
     print('Anchors:')
@@ -77,7 +77,8 @@ def _main(args):
 
     load_pretrained = False
     pretrained_path = None
-    pretrained_path = 'weights_voc/darknet19_s3_best.FalseFalse.h5'
+    pretrained_path = 'weights/mobilenet_s1_best.FalseFalse.h5'
+
     if pretrained_path:
         load_pretrained = True
     model_body, model = create_model(anchors, class_names, 
@@ -167,10 +168,16 @@ def train(model_body, model, class_names, anchors, train_batch_gen, valid_batch_
 
     best weights according to val_loss is saved as trained_stage_3_best.h5
     '''
+    adam = Adam(lr=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
-        optimizer='adam', loss={
+        optimizer=adam, loss={
             'yolo_loss': lambda y_true, y_pred: y_pred
         })  # This is a hack to use the custom loss function in the last layer.
+
+    # model.compile(
+    #     optimizer='adam', loss={
+    #         'yolo_loss': lambda y_true, y_pred: y_pred
+    #     })  # This is a hack to use the custom loss function in the last layer.
 
     logging = TensorBoard()
     early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=15, verbose=1, mode='auto')
@@ -181,7 +188,7 @@ def train(model_body, model, class_names, anchors, train_batch_gen, valid_batch_
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 10
+    num_epochs = 30
     freq_recall_precision = 5
 
     recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)
@@ -199,7 +206,7 @@ def train(model_body, model, class_names, anchors, train_batch_gen, valid_batch_
         model.save_weights('weights/{}_s1.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
         recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)
 
-    adam = Adam(lr=0.0005, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
+    adam = Adam(lr=0.00005, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
         optimizer=adam, loss={
             'yolo_loss': lambda y_true, y_pred: y_pred
@@ -220,7 +227,7 @@ def train(model_body, model, class_names, anchors, train_batch_gen, valid_batch_
         model.save_weights('weights/{}_s2.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
         recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)
 
-    adam = Adam(lr=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
+    adam = Adam(lr=0.00005, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=5e-06)
     model.compile(
         optimizer=adam, loss={
             'yolo_loss': lambda y_true, y_pred: y_pred
@@ -240,60 +247,6 @@ def train(model_body, model, class_names, anchors, train_batch_gen, valid_batch_
         model.save_weights('weights/{}_s3.{}.{}.h5'.format(FEATURE_EXTRACTOR, SHALLOW_DETECTOR, USE_X0_FEATURE))
         recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)
 
-
-def draw(model_body, class_names, anchors, image_data, image_set='val',
-            weights_name='trained_stage_3_best.h5', out_path="output_images", save_all=True):
-    '''
-    Draw bounding boxes on image data
-    '''
-    if image_set == 'train':
-        image_data = np.array([np.expand_dims(image, axis=0)
-            for image in image_data[:int(len(image_data)*.9)]])
-    elif image_set == 'val':
-        image_data = np.array([np.expand_dims(image, axis=0)
-            for image in image_data[int(len(image_data)*.9):]])
-    elif image_set == 'all':
-        image_data = np.array([np.expand_dims(image, axis=0)
-            for image in image_data])
-    else:
-        ValueError("draw argument image_set must be 'train', 'val', or 'all'")
-
-    print(image_data.shape)
-    model_body.load_weights(weights_name)
-
-    # Create output variables for prediction.
-    yolo_outputs = decode_yolo_output(model_body.output, anchors, len(class_names))
-    input_image_shape = K.placeholder(shape=(2, ))
-    boxes, scores, classes = yolo_eval(
-        yolo_outputs, input_image_shape, score_threshold=0.07, iou_threshold=0)
-
-    # Run prediction
-    sess = K.get_session()  # TODO: Remove dependence on Tensorflow session.
-
-    if  not os.path.exists(out_path):
-        os.makedirs(out_path)
-    for i in range(len(image_data)):
-        out_boxes, out_scores, out_classes = sess.run(
-            [boxes, scores, classes],
-            feed_dict={
-                model_body.input: image_data[i],
-                input_image_shape: [image_data.shape[2], image_data.shape[3]],
-                K.learning_phase(): 0
-            })
-        print('Found {} boxes for image.'.format(len(out_boxes)))
-        print(out_boxes)
-
-        # Plot image with predicted boxes.
-        image_with_boxes = draw_boxes(image_data[i][0], out_boxes, out_classes,
-                                    class_names, out_scores)
-        # Save the image:
-        if save_all or (len(out_boxes) > 0):
-            image = PIL.Image.fromarray(image_with_boxes)
-            image.save(os.path.join(out_path,str(i)+'.png'))
-
-        # To display (pauses the program):
-        # plt.imshow(image_with_boxes, interpolation='nearest')
-        # plt.show()
 if __name__ == '__main__':
     args = argparser.parse_args()
     _main(args)
