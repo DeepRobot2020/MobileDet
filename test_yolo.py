@@ -57,7 +57,7 @@ parser.add_argument(
 parser.add_argument(
     '-c',
     '--classes_path',
-    help='path to classes file, defaults to drone_classes.txt',
+    help='path to classes file, defaults to lisa_classes.txt',
     default='model_data/lisa_classes.txt')
 
 parser.add_argument(
