@@ -1,7 +1,5 @@
 *.h5
 *.weights
-*.png
 __pycache__/
-images
-*.sh
+
 

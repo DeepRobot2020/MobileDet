@@ -198,7 +198,9 @@ def _main(args):
 
     idx = 0
     image_files = sorted(glob.glob(test_path + '/*.png')) 
-
+    if len(image_files) == 0:
+        image_files = sorted(glob.glob(test_path + '/*.jpg')) 
+    
     # import pdb; pdb.set_trace()
     for idx in range(len(image_files)):
         
