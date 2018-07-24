@@ -36,7 +36,7 @@ argparser.add_argument(
     '-d',
     '--data_path',
     help="path to numpy data file (.npz) containing np.object array 'boxes' and np.uint8 array 'images'",
-    default='~/data/lisa.hdf5')
+    default='~/data/parking_lot.hdf5')
 
 argparser.add_argument(
     '-a',
@@ -77,7 +77,7 @@ def _main(args):
 
     load_pretrained = False
     pretrained_path = None
-    pretrained_path = 'weights/mobilenet_s1_best.FalseFalse.h5'
+    pretrained_path = 'weights/mobilenet_s3_best.FalseFalse.h5'
 
     if pretrained_path:
         load_pretrained = True
@@ -188,7 +188,7 @@ def train(model_body, model, class_names, anchors, train_batch_gen, valid_batch_
     print('train_steps_per_epoch=',train_steps_per_epoch);
     print('valid_steps_per_epoch=',valid_steps_per_epoch);
     
-    num_epochs = 30
+    num_epochs = 20
     freq_recall_precision = 5
 
     recall_precision(valid_batch_gen.H5_IMAGES, valid_batch_gen.H5_BOXES, model_body, anchors, class_names)

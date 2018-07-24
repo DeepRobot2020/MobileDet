@@ -34,7 +34,7 @@ from keras.utils import plot_model
 
 from tensorflow.python.framework import graph_util
 from tensorflow.python.framework import graph_io
-
+import csv
 import os
 import tensorflow as tf
 from tensorflow.python.tools.freeze_graph import freeze_graph
@@ -148,6 +148,7 @@ def _main(args):
         print('Creating output path {}'.format(output_path))
         os.mkdir(output_path)
 
+    csv_path = os.path.join(output_path, 'detect.csv')
     class_names  = get_classes(classes_path)
     anchors = get_anchors(anchors_path)
     if SHALLOW_DETECTOR:
@@ -200,70 +201,79 @@ def _main(args):
     image_files = sorted(glob.glob(test_path + '/*.png')) 
     if len(image_files) == 0:
         image_files = sorted(glob.glob(test_path + '/*.jpg')) 
-    
-    # import pdb; pdb.set_trace()
-    for idx in range(len(image_files)):
-        
-        image_file = image_files[idx]
-        # print(os.path.join(test_path, image_file))
-        image = Image.open(image_file)
 
-        resized_image = image.resize(
-            tuple(reversed(model_image_size)), Image.BICUBIC)
+    with open(csv_path, 'w') as csvfile:
+        filewriter = csv.writer(csvfile, delimiter=',',
+                                quotechar='|', quoting=csv.QUOTE_MINIMAL)
 
-        image_data = np.array(resized_image, dtype='float32')
-        image_data /= 255.
-        image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
-        start = time.time()
-        out_boxes, out_scores, out_classes = sess.run(
-            [boxes, scores, classes],
-            feed_dict={
-                yolo_model.input: image_data,
-                input_image_shape: [image.size[1], image.size[0]],
-                K.learning_phase(): 0
-            })
-        last = (time.time() - start)
-        print('Found {} boxes for {}'.format(len(out_boxes), idx))        
+        # import pdb; pdb.set_trace()
+        for idx in range(len(image_files)):
 
-        font = ImageFont.truetype(
-            font='font/FiraMono-Medium.otf',
-            size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
-        thickness = (image.size[0] + image.size[1]) // 300
+            image_file = image_files[idx]
+            # print(os.path.join(test_path, image_file))
+            image = Image.open(image_file)
 
-        for i, c in reversed(list(enumerate(out_classes))):
-            predicted_class = class_names[c]
-            box = out_boxes[i]
-            score = out_scores[i]
-            label = '{} {:.2f}'.format(predicted_class, score)
+            image_name = image_file.split('/')[-1] 
 
-            draw = ImageDraw.Draw(image)
-            label_size = draw.textsize(label, font)
+            resized_image = image.resize(
+                tuple(reversed(model_image_size)), Image.BICUBIC)
 
-            top, left, bottom, right = box
-            top = max(0, np.floor(top + 0.5).astype('int32'))
-            left = max(0, np.floor(left + 0.5).astype('int32'))
-            bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
-            right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
-            print(label, (left, top), (right, bottom))
+            image_data = np.array(resized_image, dtype='float32')
 
-            if top - label_size[1] >= 0:
-                text_origin = np.array([left, top - label_size[1]])
-            else:
-                text_origin = np.array([left, top + 1])
+            image_data /= 255.
+            image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
+            start = time.time()
+            out_boxes, out_scores, out_classes = sess.run(
+                [boxes, scores, classes],
+                feed_dict={
+                    yolo_model.input: image_data,
+                    input_image_shape: [image.size[1], image.size[0]],
+                    K.learning_phase(): 0
+                })
+            last = (time.time() - start)
+            print('Found {} boxes for {}'.format(len(out_boxes), idx))        
 
-            for i in range(thickness):
+            font = ImageFont.truetype(
+                font='font/FiraMono-Medium.otf',
+                size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
+            thickness = (image.size[0] + image.size[1]) // 300
+
+            for i, c in reversed(list(enumerate(out_classes))):
+                predicted_class = class_names[c]
+                box = out_boxes[i]
+                score = out_scores[i]
+                label = 'box{}: {} {:.2f}'.format(i, predicted_class, score)
+
+                draw = ImageDraw.Draw(image)
+                label_size = draw.textsize(label, font)
+
+                top, left, bottom, right = box
+                top = max(0, np.floor(top + 0.5).astype('int32'))
+                left = max(0, np.floor(left + 0.5).astype('int32'))
+                bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
+                right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
+                print(label, (left, top), (right, bottom))
+
+                filewriter.writerow([image_name, 'box{}'.format(i), predicted_class, top, left, bottom, right])
+
+                if top - label_size[1] >= 0:
+                    text_origin = np.array([left, top - label_size[1]])
+                else:
+                    text_origin = np.array([left, top + 1])
+
+                for i in range(thickness):
+                    draw.rectangle(
+                        [left + i, top + i, right - i, bottom - i],
+                        outline=colors[c])
                 draw.rectangle(
-                    [left + i, top + i, right - i, bottom - i],
-                    outline=colors[c])
-            draw.rectangle(
-                [tuple(text_origin), tuple(text_origin + label_size)],
-                fill=colors[c])
-            draw.text(text_origin, label, fill=(0, 0, 0), font=font)
-            del draw
+                    [tuple(text_origin), tuple(text_origin + label_size)],
+                    fill=colors[c])
+                draw.text(text_origin, label, fill=(0, 0, 0), font=font)
+                del draw
 
-        image.save(os.path.join(output_path, str(idx)+'.jpg'), quality=90)
-        idx += 1
-    sess.close()
+            image.save(os.path.join(output_path, image_name), quality=90)
+            idx += 1
+        sess.close()
 
 
 if __name__ == '__main__':
